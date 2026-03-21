@@ -1,5 +1,4 @@
-// Command arms-worker runs an Asynq consumer for future Redis-scheduled jobs (product_schedules / autopilot offload).
-// Today it registers a no-op handler for arms:ping; extend handlers to call platform.OpenApp + autopilot when ready.
+// Command arms-worker runs an Asynq consumer: autopilot cadence ticks (and optional ping for smoke tests).
 package main
 
 import (
@@ -8,13 +7,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hibiken/asynq"
 
 	"github.com/closeloopautomous/arms/internal/config"
+	"github.com/closeloopautomous/arms/internal/jobs"
+	"github.com/closeloopautomous/arms/internal/platform"
 )
-
-const queueDefault = "arms"
 
 func main() {
 	cfg := config.LoadFromEnv()
@@ -23,17 +23,35 @@ func main() {
 		slog.Info("arms-worker: ARMS_REDIS_ADDR not set — exiting (no Redis consumer)")
 		return
 	}
+	openCtx, cancelOpen := context.WithTimeout(context.Background(), 2*time.Minute)
+	app, err := platform.OpenApp(openCtx, cfg)
+	cancelOpen()
+	if err != nil {
+		slog.Error("open app", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = app.Close() }()
+
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: cfg.RedisAddr},
 		asynq.Config{
 			Concurrency: 2,
-			Queues:      map[string]int{queueDefault: 1},
+			Queues:      map[string]int{jobs.QueueDefault: 1},
 		},
 	)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc("arms:ping", func(ctx context.Context, t *asynq.Task) error {
 		slog.Debug("asynq task", "type", t.Type())
 		return nil
+	})
+	mux.HandleFunc(jobs.TypeAutopilotTick, func(ctx context.Context, _ *asynq.Task) error {
+		tickCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		err := app.Handlers.Autopilot.TickScheduled(tickCtx, time.Now().UTC())
+		if err != nil {
+			slog.Debug("autopilot tick", "err", err)
+		}
+		return err
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

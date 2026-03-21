@@ -13,6 +13,40 @@ type ProductRepository interface {
 	ListAll(ctx context.Context) ([]domain.Product, error)
 }
 
+// PreferenceModelRepository stores per-product learned preference payloads (separate from legacy products.preference_model_json).
+type PreferenceModelRepository interface {
+	Get(ctx context.Context, productID domain.ProductID) (modelJSON string, updatedAt time.Time, ok bool, err error)
+	Upsert(ctx context.Context, productID domain.ProductID, modelJSON string, at time.Time) error
+}
+
+// OperationsLogFilter narrows audit log reads (all fields optional except Limit defaulting in stores).
+type OperationsLogFilter struct {
+	Limit        int
+	ProductID    *domain.ProductID
+	Action       string
+	ResourceType string
+	Since        *time.Time // inclusive lower bound on created_at (UTC)
+}
+
+// OperationsLogRepository is an append-only audit trail for operator-relevant actions.
+type OperationsLogRepository interface {
+	Append(ctx context.Context, e domain.OperationLogEntry) error
+	List(ctx context.Context, f OperationsLogFilter) ([]domain.OperationLogEntry, error)
+}
+
+// ProductScheduleRepository stores per-product flags for autopilot tick eligibility (see product_schedules table).
+// Get returns (nil, nil) when no row exists — callers treat that as “enabled” for backward compatibility.
+type ProductScheduleRepository interface {
+	Get(ctx context.Context, productID domain.ProductID) (*domain.ProductSchedule, error)
+	Upsert(ctx context.Context, row *domain.ProductSchedule) error
+}
+
+// ConvoyMailRepository appends and lists messages for convoy subtasks (baseline mail).
+type ConvoyMailRepository interface {
+	Append(ctx context.Context, convoyID domain.ConvoyID, subtaskID domain.SubtaskID, body string, at time.Time) error
+	ListByConvoy(ctx context.Context, convoyID domain.ConvoyID, limit int) ([]domain.ConvoyMailMessage, error)
+}
+
 // SwipeHistoryRepository appends and lists human swipe decisions per product.
 type SwipeHistoryRepository interface {
 	Append(ctx context.Context, ideaID domain.IdeaID, productID domain.ProductID, decision string, at time.Time) error

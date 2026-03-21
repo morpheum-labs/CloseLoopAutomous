@@ -48,6 +48,8 @@ type Handlers struct {
 	MergeQueue     ports.WorkspaceMergeQueueRepository
 	MergeShip      *mergequeue.Service // optional; real merge ship when ARMS_MERGE_* set
 	AgentHealth    ports.AgentHealthRepository // optional; nil keeps legacy agent listing stub
+	PrefModel      ports.PreferenceModelRepository
+	OperationsLog  ports.OperationsLogRepository
 }
 
 func (h *Handlers) health(w http.ResponseWriter, _ *http.Request) {
@@ -87,6 +89,8 @@ func (h *Handlers) createProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	detail, _ := json.Marshal(map[string]string{"name": p.Name})
+	h.logOperation(r.Context(), "http", "product.create", "product", string(p.ID), string(detail), p.ID)
 	writeJSON(w, http.StatusCreated, productToJSON(p))
 }
 
@@ -363,6 +367,8 @@ func (h *Handlers) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
+	td, _ := json.Marshal(map[string]string{"idea_id": req.IdeaID})
+	h.logOperation(r.Context(), "http", "task.create", "task", string(t.ID), string(td), t.ProductID)
 	writeJSON(w, http.StatusCreated, taskToJSON(t))
 }
 
@@ -532,6 +538,8 @@ func (h *Handlers) dispatchTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	dd, _ := json.Marshal(map[string]float64{"estimated_cost": req.EstimatedCost})
+	h.logOperation(r.Context(), "http", "task.dispatch", "task", string(id), string(dd), t.ProductID)
 	writeJSON(w, http.StatusOK, taskToJSON(t))
 }
 
@@ -1674,6 +1682,302 @@ func taskToJSON(t *domain.Task) map[string]any {
 		m["pull_request_head_branch"] = t.PullRequestHeadBranch
 	}
 	return m
+}
+
+func (h *Handlers) logOperation(ctx context.Context, actor, action, resType, resID, detailJSON string, pid domain.ProductID) {
+	if h.OperationsLog == nil {
+		return
+	}
+	if detailJSON == "" {
+		detailJSON = "{}"
+	}
+	_ = h.OperationsLog.Append(ctx, domain.OperationLogEntry{
+		Actor: actor, Action: action, ResourceType: resType, ResourceID: resID,
+		DetailJSON: detailJSON, ProductID: pid,
+	})
+}
+
+func (h *Handlers) getProductPreferenceModel(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pid := domain.ProductID(r.PathValue("id"))
+	p, err := h.Autopilot.Products.ByID(ctx, pid)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	modelJSON := strings.TrimSpace(p.PreferenceModelJSON)
+	if modelJSON == "" {
+		modelJSON = "[]"
+	}
+	source := "legacy"
+	updated := p.UpdatedAt
+	if mj, at, ok, err := h.PrefModel.Get(ctx, pid); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	} else if ok {
+		modelJSON = strings.TrimSpace(mj)
+		if modelJSON == "" {
+			modelJSON = "{}"
+		}
+		source = "preference_models"
+		updated = at
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"product_id": string(pid),
+		"model_json": modelJSON,
+		"source":     source,
+		"updated_at": updated.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (h *Handlers) putProductPreferenceModel(w http.ResponseWriter, r *http.Request) {
+	var req putPreferenceModelReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	ctx := r.Context()
+	pid := domain.ProductID(r.PathValue("id"))
+	if _, err := h.Autopilot.Products.ByID(ctx, pid); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if err := h.PrefModel.Upsert(ctx, pid, strings.TrimSpace(req.ModelJSON), time.Now().UTC()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	h.logOperation(ctx, "http", "preference_model.upsert", "product", string(pid), "{}", pid)
+	mj, at, _, err := h.PrefModel.Get(ctx, pid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"product_id": string(pid),
+		"model_json": mj,
+		"source":     "preference_models",
+		"updated_at": at.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (h *Handlers) listOperationsLog(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if q := strings.TrimSpace(r.URL.Query().Get("limit")); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "validation", "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	var pidPtr *domain.ProductID
+	if ps := strings.TrimSpace(r.URL.Query().Get("product_id")); ps != "" {
+		p := domain.ProductID(ps)
+		pidPtr = &p
+	}
+	var since *time.Time
+	if qs := strings.TrimSpace(r.URL.Query().Get("since")); qs != "" {
+		t, err := time.Parse(time.RFC3339Nano, qs)
+		if err != nil {
+			t, err = time.Parse(time.RFC3339, qs)
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "validation", "since must be RFC3339 or RFC3339Nano")
+			return
+		}
+		u := t.UTC()
+		since = &u
+	}
+	f := ports.OperationsLogFilter{
+		Limit:        limit,
+		ProductID:    pidPtr,
+		Action:       strings.TrimSpace(r.URL.Query().Get("action")),
+		ResourceType: strings.TrimSpace(r.URL.Query().Get("resource_type")),
+		Since:        since,
+	}
+	list, err := h.OperationsLog.List(r.Context(), f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := make([]any, 0, len(list))
+	for i := range list {
+		e := &list[i]
+		m := map[string]any{
+			"id":             e.ID,
+			"created_at":     e.CreatedAt.UTC().Format(time.RFC3339Nano),
+			"actor":          e.Actor,
+			"action":         e.Action,
+			"resource_type":  e.ResourceType,
+			"resource_id":    e.ResourceID,
+			"detail_json":    e.DetailJSON,
+		}
+		if e.ProductID != "" {
+			m["product_id"] = string(e.ProductID)
+		}
+		out = append(out, m)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
+func (h *Handlers) getProductSchedule(w http.ResponseWriter, r *http.Request) {
+	pid := domain.ProductID(r.PathValue("id"))
+	row, err := h.Autopilot.GetProductSchedule(r.Context(), pid)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := map[string]any{
+		"product_id": string(pid),
+		"enabled":    row.Enabled,
+		"spec_json":  row.SpecJSON,
+	}
+	if !row.UpdatedAt.IsZero() {
+		out["updated_at"] = row.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handlers) patchProductSchedule(w http.ResponseWriter, r *http.Request) {
+	var req patchProductScheduleReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	ctx := r.Context()
+	pid := domain.ProductID(r.PathValue("id"))
+	cur, err := h.Autopilot.GetProductSchedule(ctx, pid)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	enabled := cur.Enabled
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	spec := cur.SpecJSON
+	if req.SpecJSON != nil {
+		spec = strings.TrimSpace(*req.SpecJSON)
+		if spec == "" {
+			spec = "{}"
+		}
+	}
+	row, err := h.Autopilot.UpsertProductSchedule(ctx, pid, enabled, spec)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	h.logOperation(ctx, "http", "product_schedule.upsert", "product", string(pid), "{}", pid)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"product_id": string(pid),
+		"enabled":    row.Enabled,
+		"spec_json":  row.SpecJSON,
+		"updated_at": row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	})
+}
+
+func (h *Handlers) postRecomputePreferenceModel(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pid := domain.ProductID(r.PathValue("id"))
+	limit := 500
+	if q := strings.TrimSpace(r.URL.Query().Get("limit")); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "validation", "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	jsonStr, err := h.Autopilot.RecomputePreferenceModelFromSwipes(ctx, pid, limit)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	h.logOperation(ctx, "http", "preference_model.recompute", "product", string(pid), "{}", pid)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"product_id": string(pid),
+		"model_json": jsonStr,
+		"source":     "preference_models",
+	})
+}
+
+func (h *Handlers) listConvoyMail(w http.ResponseWriter, r *http.Request) {
+	id := domain.ConvoyID(r.PathValue("id"))
+	limit := 100
+	if q := strings.TrimSpace(r.URL.Query().Get("limit")); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "validation", "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	list, err := h.Convoy.ListMail(r.Context(), id, limit)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := make([]any, 0, len(list))
+	for i := range list {
+		m := list[i]
+		out = append(out, map[string]any{
+			"id": m.ID, "convoy_id": string(m.ConvoyID), "subtask_id": string(m.SubtaskID),
+			"body": m.Body, "created_at": m.CreatedAt.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+func (h *Handlers) postConvoyMail(w http.ResponseWriter, r *http.Request) {
+	var req postConvoyMailReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	ctx := r.Context()
+	id := domain.ConvoyID(r.PathValue("id"))
+	if err := h.Convoy.PostMail(ctx, id, domain.SubtaskID(req.SubtaskID), req.Body); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	h.logOperation(ctx, "http", "convoy.mail.append", "convoy", string(id), `{}`, "")
+	writeJSON(w, http.StatusCreated, map[string]any{"status": "ok"})
 }
 
 func convoyToJSON(c *domain.Convoy) map[string]any {

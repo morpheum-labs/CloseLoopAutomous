@@ -4,7 +4,7 @@ Use this as the master backlog for bringing `arms` toward Autensa/Mission Contro
 
 **What this is:** a single checklist + design locks for **backend parity** with [mission-control](https://github.com/crshdn/mission-control): API routes, SQLite schema, OpenClaw wiring, safety/cost/workspace, realtime, and convoy/autopilot gaps. It is **not** a fishtank/UI spec; pair with [api-ref.md](api-ref.md) for HTTP details and [recomendeddesign.md](recomendeddesign.md) for the broader architecture sketch.
 
-_Re-checked against the `arms/` tree (2026-03-22): baseline vs “full MC” is called out so unchecked rows are not misread as “missing entirely” when a slim table or route already exists._
+_Re-checked against the `arms/` tree (2026-03-23): SQLite schema **v16** (`ExpectedSchemaVersion` in `internal/adapters/sqlite/migrate.go`); baseline vs “full MC” is called out so unchecked rows are not misread as “missing entirely” when a slim table or route already exists._
 
 _See also [recomendeddesign.md](recomendeddesign.md) (earlier “GoAutensa” outline); this file is the live parity checklist + locked target architecture._
 
@@ -16,7 +16,9 @@ Direction for **100% MC-style behavior** while staying hexagonal (`ports` / `ada
 
 ```
 CloseLoopAutomous / arms (e.g. :8080)
-├── cmd/arms/                    # main, graceful shutdown, config; + Asynq worker process when added
+├── cmd/arms/                    # HTTP API, graceful shutdown; enqueues Asynq autopilot ticks when Redis + tick interval set
+├── cmd/arms-worker/             # Asynq consumer: arms:autopilot_tick → autopilot.TickScheduled (same DB/env as API)
+├── internal/jobs/               # Shared Asynq task type + queue names (arms:autopilot_tick, queue arms)
 ├── internal/adapters/httpapi    # REST (+ alias routes for MC clients)
 ├── internal/application/        # autopilot, convoy, costs, workspace, learner, scheduler, events
 ├── internal/domain/
@@ -48,18 +50,18 @@ These resolve open questions from the backlog; implement against this table.
 | **Realtime** | **Domain events + transactional outbox** → SSE `/api/live/events` (and later operator chat); avoid polling DB from handlers. |
 | **Cost caps** | **`cost_caps` table** + daily/monthly/product scope; atomic enforcement in **application/costs** (extends today’s `budget.Static`). |
 | **Workspace** | Dedicated **workspace service**: git worktrees, sandbox paths, port allocator **4200–4299**, **serialized merge queue**, **product-scoped locks**. |
-| **Preference learning** | Migrate from **`preference_model_json` append-only** → **`swipe_history` + `preference_models`**; optional embeddings later. |
+| **Preference learning** | **`swipe_history`** (audit) + dedicated **`preference_models`** table + **`GET/PUT /api/products/{id}/preference-model`** (baseline); legacy **`preference_model_json`** on product still updated on swipe; **ML / embeddings** later. |
 | **PR shipping** | Real **`PullRequestPublisher`**: default **google/go-github** REST + PAT; optional **`gh pr create`** backend for local/Enterprise flows (`ARMS_GITHUB_PR_BACKEND=gh`). |
 
 ---
 
 ## API stubs, docs, and gateway session
 
-**Human reference:** [api-ref.md](api-ref.md) — section *Stubs / placeholders*. **OpenAPI:** [openapi/arms-openapi.yaml](openapi/arms-openapi.yaml) — tag **Stubs** plus `Product.preference_model_json` (stub for real preference learning, not under Stubs).
+**Human reference:** [api-ref.md](api-ref.md) — section *Stubs / placeholders*. **OpenAPI:** [openapi/arms-openapi.yaml](openapi/arms-openapi.yaml) — tag **Stubs** plus `Product.preference_model_json` (swipe append trail); dedicated preference payload also via **`GET/PUT …/preference-model`** (tag **Ideas**). Tag **Ops**: **`GET /api/operations-log`**.
 
 | Route | Status |
 |-------|--------|
-| `GET /api/agents` | Empty list until agent domain ships |
+| `GET /api/agents` | **`registry[]`** execution agents + **`items[]`** recent task heartbeats (`stub: true` on **`items`** only when agent health is disabled) |
 | `POST /api/openclaw/proxy` | Not implemented (501); use server env `OPENCLAW_GATEWAY_*` + WS from service |
 | `GET /api/workspaces` | **Snapshot:** allocated ports + `merge_queue_pending` (not a stub when stores wired) |
 | `GET /api/settings` | Minimal / empty JSON |
@@ -75,13 +77,13 @@ Rough calendar: **~4 weeks core (A–C)** + **polish (D)**; optional future belo
 | Phase | Time (guide) | Deliverables |
 |-------|----------------|--------------|
 | **A — Production safety** | 1–2 wk | **Done (when `AgentHealth` wired):** MC convoy singular aliases (`/api/convoy/...`); **`GET /api/products/{id}/stalled-tasks`**; completion webhook + **`POST /api/tasks/{id}/complete`** → **`task_agent_health`** **`completed`** + **`task_completed`** outbox in **one SQLite transaction** (`LiveActivityTX.CompleteTaskWithEvent`); task **`sandbox_path` / `worktree_path`** (008–009). **Manual stall nudge:** **`POST /api/tasks/{id}/stall-nudge`** (optional JSON `{ "note" }`) → `status_reason` prefix + optional agent-health `stall_nudges[]` + SSE **`task_stall_nudged`**. **Merge queue ship:** FIFO head + **lease** + optional **real merge** (`ARMS_MERGE_BACKEND=github|local`), conflict/failure persisted on row; **`merge_ship_completed`** SSE. **Still open:** autopilot-driven merge policy (tiers), **auto**-nudge/reassign, same-Tx outbox for paths that do external I/O after DB write (e.g. PR opened), multi-instance **DB leases** for task completion / product gates beyond merge queue. |
-| **B — Full autonomy** | ~2 wk | Convoy: **done (baseline DAG semantics):** `convoy_subtasks.completed` (migration 011); dependents **`dispatch-ready`** only after upstream **completed**; webhook **`convoy_id` + `subtask_id`** + parent **`task_id`**; SSE **`convoy_subtask_dispatched`** / **`convoy_subtask_completed`**. **TBD:** full graph algorithms package, **mailbox**, deeper **agent health** (retries, convoy-aware dispatch). **GitHub PR** — **done:** REST (`go-github`) + optional **`gh` CLI** backend + env tokens. **TBD:** auto post-execution chain. Deeper **ideas** scoring/metadata; **`swipe_history`** table + list API (**done**); separate **`preference_models`** table / learning loop still **TBD**. |
-| **C — Polish** | ~1 wk | **Agent** domain + listing/health APIs (replace stub). **`product_schedules`** on **Asynq** (Redis). Optional **Ed25519** on OpenClaw `connect`. **Maybe pool** resurface / batch re-eval. ~~**HTTP aliases** `/api/convoy/*`~~ (done in A). |
+| **B — Full autonomy** | ~2 wk | Convoy: **done (baseline DAG semantics):** `convoy_subtasks.completed` (migration 011); dependents **`dispatch-ready`** only after upstream **completed**; webhook **`convoy_id` + `subtask_id`** + parent **`task_id`**; SSE **`convoy_subtask_dispatched`** / **`convoy_subtask_completed`**. **TBD:** full graph algorithms package, **mailbox**, deeper **agent health** (retries, convoy-aware dispatch). **GitHub PR** — **done:** REST (`go-github`) + optional **`gh` CLI** backend + env tokens. **TBD:** auto post-execution chain. Deeper **ideas** scoring/metadata; **`swipe_history`** table + list API (**done**); **`preference_models`** table + **`GET/PUT /api/products/{id}/preference-model`** (**done** baseline); **ML / learning loop** still **TBD**. |
+| **C — Polish** | ~1 wk | **Agent** domain + listing/health APIs (replace stub). **`product_schedules`** on **Asynq** (Redis) — **still TBD** beyond placeholder table; autopilot tick offload via Redis **done**. Optional **Ed25519** on OpenClaw `connect`. **Maybe pool** resurface / batch re-eval. ~~**HTTP aliases** `/api/convoy/*`~~ (done in A). |
 | **D — Optional future** | — | Embedded UI (e.g. HTMX/templ), Postgres adapter, pure-Go agent runtime (replace OpenClaw). |
 
-**Done in-tree (former “first commits”):** Compose **redis** service (optional; not yet consumed by app code), transactional **outbox** + **`livefeed`** SSE hub, **workspace** ports + merge queue + optional git worktrees, **GitHub** / **`gh`** behind `PullRequestPublisher`, **swipe_history**, **cost_caps** + composite budget, **task agent health** APIs.
+**Done in-tree (former “first commits”):** Compose **redis** service (optional); **`ARMS_REDIS_ADDR`** + **`ARMS_AUTOPILOT_TICK_SEC`** → **`cmd/arms`** enqueues **`arms:autopilot_tick`**, **`cmd/arms-worker`** runs **`TickScheduled`**, transactional **outbox** + **`livefeed`** SSE hub, **workspace** ports + merge queue + optional git worktrees, **GitHub** / **`gh`** behind `PullRequestPublisher`, **swipe_history**, **cost_caps** + composite budget, **task agent health** APIs, **`preference_models`** + **`operations_log`** (migrations 014–015).
 
-**Next vertical slices (suggested):** (1) **Enqueue autopilot ticks** from `cmd/arms` when **`ARMS_REDIS_ADDR`** set + worker handler calling **`TickScheduled`**, (2) **preference_models** or ML pipeline consuming **`swipe_history`**, (3) convoy **graph algorithms + richer mailbox** (cross-agent), (4) optional **`/api/openclaw/*`** HTTP proxy if the UI needs it, (5) keep **OpenAPI** in sync with new routes.
+**Next vertical slices (suggested):** (1) **`product_schedules`** enqueue + cron on Asynq (beyond autopilot tick), (2) **ML / preference** pipeline consuming **`swipe_history`** + **`preference_models`**, (3) convoy **graph algorithms + richer mailbox** (cross-agent), (4) optional **`/api/openclaw/*`** HTTP proxy if the UI needs it, (5) broaden **operations_log** coverage + operator filters.
 
 ---
 
@@ -104,7 +106,7 @@ Use [crshdn/mission-control](https://github.com/crshdn/mission-control) for beha
 
 - [x] Optional **MC-compat alias routes** — `POST /api/convoy`, `GET /api/convoy/{id}`, `POST /api/convoy/{id}/dispatch-ready` → same handlers as `/api/convoys/...`
 - [x] Add HTTP server driving adapter (REST or minimal RPC) for orchestration — `cmd/arms`, `internal/adapters/httpapi`
-- [x] Map route groups analogous to MC: `tasks`, `products`, `agents`, `costs`, `convoy`, `openclaw`, `webhooks`, `events`/`live`, `workspaces`, `settings` — implemented or stubbed under `/api/...`
+- [x] Map route groups analogous to MC: `tasks`, `products`, `agents`, `costs`, `convoy`, `openclaw`, `webhooks`, `events`/`live`, `workspaces`, `settings` — implemented or stubbed under `/api/...` (+ **`preference-model`**, **`operations-log`**, **`research-cycles`**, **`merge-queue`**, **`stalled-tasks`**, **`stall-nudge`**, etc. — see **`GET /api/docs/routes`**)
 - [x] Bearer auth middleware (`MC_API_TOKEN`-style) — env `MC_API_TOKEN`; omitted = dev open access
 - [x] SSE auth pattern (e.g. token query param) for live streams — `GET /api/live/events` uses `?token=` when auth enabled (`SSEQueryToken`)
 - [x] Request validation layer (DTOs + schema validation) — JSON DTOs + `validate()` helpers (no external schema lib yet)
@@ -131,19 +133,19 @@ Use [crshdn/mission-control](https://github.com/crshdn/mission-control) for beha
 - [x] `research_cycles` — migration **`012_research_cycles.sql`**; append on successful **`RunResearch`**; **`GET /api/products/{id}/research-cycles`** (full MC “research graph” / analytics still TBD)
 - [ ] `ideas`: full scoring/metadata as in MC (today: title, description, impact, feasibility, reasoning, swipe outcome)
 - [x] `swipe_history` — migration `007_swipe_history.sql`; SQLite + memory stores; autopilot **Append** on swipe / promote-maybe; **`GET /api/products/{id}/swipe-history`** (`?limit=`)
-- [ ] `preference_models` (per-product learning) — **no** dedicated table yet; today: `preference_model_json` on product + **`swipe_history`** audit trail
+- [x] `preference_models` — migration **`014_preference_models.sql`**; **`GET` / `PUT /api/products/{id}/preference-model`** (dedicated row overrides legacy **`preference_model_json`** on product for reads); **ML / training loop** still **TBD**
 - [x] `maybe_pool` table + list/promote API — `MaybePoolRepository`; `GET /api/products/{id}/maybe-pool`, `POST /api/ideas/{id}/promote-maybe` (baseline; aligns with §5)
 - [ ] Maybe pool **resurface** / batch re-eval workflow (MC-style; not just storage)
 - [ ] `product_feedback`
 - [x] `cost_events`: **agent**, **model** columns (`006_phase_a_safety.sql`); append + breakdown API
 - [x] `cost_caps` (daily + monthly + cumulative per product) + **`budget.Composite`** at dispatch
-- [ ] `product_schedules` — table **`product_schedules`** created in migration 012 (placeholder); **no** Asynq/cron wiring from HTTP yet (**`cmd/arms-worker`** + **`ARMS_REDIS_ADDR`** stub consumer only)
-- [ ] `operations_log` / audit trail
-- [ ] `convoys` / `convoy_subtasks`: richer DAG metadata, mail (today: slim `domain.Convoy` + HTTP create + **`dispatch-ready`** waves + per-subtask **`dispatched` / `completed` / `external_ref`**; migration **`011_convoy_subtask_completed.sql`**)
+- [x] `product_schedules` — table in **012**; **`GET` / `PATCH /api/products/{id}/product-schedule`**; **`TickScheduled`** skips products with **`enabled: false`**; **per-row Asynq/cron** (beyond global autopilot tick) still **TBD**
+- [x] `operations_log` — migration **`015_operations_log.sql`**; **`GET /api/operations-log`** with **`?action=`**, **`?resource_type=`**, **`?since=`** (RFC3339); append on key actions (extend coverage over time)
+- [ ] `convoys` / `convoy_subtasks`: richer DAG metadata (beyond **cycle validation** on create + slim domain); **`convoy_mail`** baseline (**016**) + HTTP — **TBD:** graph package, richer mail semantics
 - [x] `task_agent_health` (per-task; not full MC agent registry) — migration `009_agent_health_repo_path.sql` (table + `products.repo_clone_path` + `workspace_merge_queue.completed_at`)
 - [x] `tasks`: **`sandbox_path`**, **`worktree_path`** — migration `008_task_workspace_paths.sql` (metadata for isolation / worktrees; returned on task JSON; **`PATCH /api/tasks/{id}`** may set them)
 - [x] Checkpoint **history** + restore — `checkpoint_history` + APIs (latest still in `checkpoints`); MC **`work_checkpoints`** naming parity optional
-- [ ] `agent_mailbox`
+- [x] `agent_mailbox` — migration **`013_agents_mailbox.sql`** + **`GET/POST /api/agents/{id}/mailbox`** (baseline); **convoy / cross-agent mail** still **TBD** (§6)
 - [x] `workspace_ports` (4200–4299) + HTTP allocate/release
 - [x] `workspace_merge_queue` table + pending **count** in `GET /api/workspaces`; FIFO **head** completion + **`completed_at`** on done; **real ship** optional via **`ARMS_MERGE_BACKEND=github|local`** (lease columns, merge outcome fields, **`mergequeue` service**); query **`skip_ship=1`** for break-glass metadata-only advance
 - [ ] Broader MC parity: soft deletes, extra cascade paths, concurrency guards, ops tooling
@@ -178,13 +180,13 @@ Use [crshdn/mission-control](https://github.com/crshdn/mission-control) for beha
 ## 5. Autopilot pipeline (extended)
 
 - [x] Product program / profile injection into research/ideation — stored on `Product` + HTTP; `ResearchPort` / `IdeationPort` godoc + `ai.ProductContextSnippet` + stub behavior (full MC “Product Program CRUD” UX still evolves with UI)
-- [x] Scheduling (interim): `research_cadence_sec`, `ideation_cadence_sec`, `last_auto_*` on product; `autopilot.Service.TickScheduled`; `ARMS_AUTOPILOT_TICK_SEC` in-process ticker in `cmd/arms`. `auto_dispatch_enabled` + tier stored; **task auto-dispatch from tier not wired** (manual dispatch unchanged).
-- [ ] **Asynq + Redis** worker — `product_schedules` + cron/delayed jobs; replaces in-process ticker for production (**Locked design decisions**)
-- [x] Background job — **minimal** today: in-process ticker; separate **worker process** TBD with Asynq
-- [x] Preference stub: each swipe appends an event to `preference_model_json` (JSON array); when **`SwipeHistoryRepository`** is wired, the same flow **also** persists **`swipe_history`** rows. Not full MC **`preference_models`** / ML.
+- [x] Scheduling (interim): `research_cadence_sec`, `ideation_cadence_sec`, `last_auto_*` on product; `autopilot.Service.TickScheduled`; `ARMS_AUTOPILOT_TICK_SEC` with **in-process** ticker in `cmd/arms` when **`ARMS_REDIS_ADDR`** is unset, or **Asynq enqueue** from `cmd/arms` + **`cmd/arms-worker`** consumer when Redis is set. `auto_dispatch_enabled` + tier stored; **task auto-dispatch from tier not wired** (manual dispatch unchanged).
+- [ ] **Asynq + Redis** (full) — **`product_schedules`** + cron/delayed jobs + deprecate in-process ticker entirely once covered (**Locked design decisions**). **Partial today:** autopilot **`arms:autopilot_tick`** queue + worker.
+- [x] Background job — **`cmd/arms-worker`** runs **`arms:autopilot_tick`** → **`TickScheduled`** when Redis configured; otherwise **`cmd/arms`** in-process ticker only.
+- [x] Preference data: each swipe appends to **`preference_model_json`** (JSON array) **and** **`swipe_history`**; **`GET/PUT …/preference-model`** reads/writes the **`preference_models`** table (GET falls back to legacy product field when no row); **`POST …/preference-model/recompute`** aggregates **`swipe_history`** into **`preference_models`** (heuristic JSON). **ML / training loop** still **TBD**.
 - [x] Maybe pool (baseline): `maybe_pool` table + `MaybePoolRepository`; swipe `maybe` adds; `GET /api/products/{id}/maybe-pool`; `POST /api/ideas/{id}/promote-maybe` → yes + pool remove + stage advance when in swipe. Resurface / batch re-eval: still open (§2).
 - [x] Automation tiers: `automation_tier` enum `supervised` | `semi_auto` | `full_auto` on product + create/patch/JSON (behavioral differences beyond storage/TBD for dispatch).
-- [ ] Post-execution chain: test → review → **automatic** PR on transitions — **partial:** **`full_auto`** + Kanban **`testing`/`in_progress` → `review`** opens PR when **`pull_request_head_branch`** set and URL empty (best-effort); explicit **`POST /api/tasks/{id}/pull-request`** still primary
+- [ ] Post-execution chain: test → review → **automatic** PR on transitions — **partial:** **`full_auto`** + Kanban **`testing`/`in_progress` → `review`** opens PR when **`pull_request_head_branch`** set and URL empty (best-effort); **`full_auto`** also **best-effort** **`MergeShip.Complete`** when task reaches **`done`** (merge-queue head / noop); explicit **`POST /api/tasks/{id}/pull-request`** still primary
 - [x] GitHub **`PullRequestPublisher`** — `adapters/shipping` GitHub client (go-github v66) + noop; **`POST /api/tasks/{id}/pull-request`** (`head_branch`, optional `title`/`body`); **`ARMS_GITHUB_TOKEN`** / **`GITHUB_TOKEN`**; SSE **`pull_request_opened`** when URL returned.
 
 ---
@@ -248,8 +250,8 @@ Use [crshdn/mission-control](https://github.com/crshdn/mission-control) for beha
 - [x] Dedicated `internal/config` — `LoadFromEnv()`, env vars documented on `Config`; `httpapi.Config` is a type alias + `LoadConfig()` wrapper for the HTTP adapter
 - [x] Dockerfile for `arms` service — `arms/Dockerfile` (Alpine runtime, static `CGO_ENABLED=0` build)
 - [x] docker-compose — `arms/docker-compose.yml` (port 8080, `DATABASE_PATH=/data/arms.db`, named volume; OpenClaw/token env commented)
-- [x] **Redis** service in Compose — optional sidecar for **Asynq** when scheduler lands; app does **not** yet read Redis URL from env (add e.g. `ARMS_REDIS_ADDR` to `internal/config` with worker wiring)
-- [x] Production hardening doc — `docs/arms-production-hardening.md` (secrets, TLS termination, `wss://`, `NO_PROXY` / webhooks, persistence, containers, logging)
+- [x] **Redis** service in Compose — optional sidecar for **Asynq**; **`ARMS_REDIS_ADDR`** wired in **`internal/config`** for autopilot enqueue (**`cmd/arms`**) + worker (**`cmd/arms-worker`**)
+- [x] Production hardening doc — `docs/arms-production-hardening.md` (secrets, TLS termination, `wss://`, `NO_PROXY` / webhooks, persistence, **`arms-worker`** + Redis, containers, logging)
 - [x] Structured logging + request IDs — `log/slog` in `cmd/arms`, `X-Request-ID` + optional access log (`internal/adapters/httpapi/logging.go`); `ARMS_LOG_JSON`, `ARMS_ACCESS_LOG`
 - [x] Automated tests touching persistence + HTTP wiring — SQLite `repos_test` / `migrate_test`, `sqlite_app_test`, `platform/router_test`, application tests with memory/SQLite + gateway stub (`openclaw` tests use real WS to test client)
 - [x] Opt-in HTTP integration tests — `internal/integration/` with `//go:build integration`; run `go test -tags=integration ./internal/integration/...` (in-memory app + stub gateway; full product→task→dispatch flow)
@@ -262,10 +264,12 @@ Use [crshdn/mission-control](https://github.com/crshdn/mission-control) for beha
 
 | Area            | Rough priority for a vertical slice                         |
 |-----------------|--------------------------------------------------------------|
-| SQLite + core tables | Unblocks everything else                                  |
+| SQLite + core tables | Unblocks everything else (current **v15** migrations)     |
 | HTTP + auth + tasks/products | Makes the service usable from a UI or CLI            |
 | Real OpenClaw WS   | Closes the execution-plane gap                            |
 | Webhooks           | Completes the async completion loop                       |
 | SSE + costs + workspace | Match MC ops and safety story                          |
-| Stub routes → real domains | Agents, workspaces, settings, openclaw proxy (if needed) |
+| Asynq + **`cmd/arms-worker`** | Redis-backed autopilot ticks; **`product_schedules`** next |
+| Operations log + preference API | Audit trail + structured preference storage (ML later)   |
+| Stub routes → real domains | Settings stub, **`/api/openclaw/*`** proxy (if needed)   |
 | Roadmap phases A→D | See **Implementation roadmap** above                      |

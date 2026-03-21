@@ -178,3 +178,31 @@ func TestDispatchReady_PublishesLiveActivity(t *testing.T) {
 		t.Fatalf("events: %#v", pub.evs)
 	}
 }
+
+func TestCreateConvoyRejectsDependencyCycle(t *testing.T) {
+	ctx := context.Background()
+	clock := timeadapter.Fixed{T: time.Unix(1700000000, 0)}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	tasks := memory.NewTaskStore()
+	convoys := memory.NewConvoyStore()
+	gateway := &gw.Stub{}
+	prodSvc := &product.Service{Products: products, Clock: clock, IDs: ids}
+	p, _ := prodSvc.Register(ctx, product.RegistrationInput{Name: "p", WorkspaceID: "w"})
+	tt := &domain.Task{
+		ID: domain.TaskID("task-1"), ProductID: p.ID, IdeaID: domain.IdeaID("idea-1"),
+		Spec: "s", Status: domain.StatusAssigned, PlanApproved: true,
+		CreatedAt: clock.Now(), UpdatedAt: clock.Now(),
+	}
+	_ = tasks.Save(ctx, tt)
+	svc := &Service{Convoys: convoys, Tasks: tasks, Products: products, Gateway: gateway, Clock: clock, IDs: ids}
+	a := domain.SubtaskID("a")
+	b := domain.SubtaskID("b")
+	_, err := svc.Create(ctx, tt.ID, p.ID, []domain.Subtask{
+		{ID: a, AgentRole: "x", DependsOn: []domain.SubtaskID{b}},
+		{ID: b, AgentRole: "y", DependsOn: []domain.SubtaskID{a}},
+	})
+	if err == nil {
+		t.Fatal("want validation error")
+	}
+}

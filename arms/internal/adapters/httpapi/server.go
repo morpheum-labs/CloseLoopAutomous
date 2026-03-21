@@ -23,6 +23,11 @@ func NewRouter(cfg Config, h *Handlers) http.Handler {
 	sub.Handle("GET /api/products/{id}/ideas", http.HandlerFunc(h.listIdeas))
 	sub.Handle("GET /api/products/{id}/maybe-pool", http.HandlerFunc(h.listMaybePool))
 	sub.Handle("GET /api/products/{id}/swipe-history", http.HandlerFunc(h.listSwipeHistory))
+	sub.Handle("POST /api/products/{id}/preference-model/recompute", http.HandlerFunc(h.postRecomputePreferenceModel))
+	sub.Handle("GET /api/products/{id}/preference-model", http.HandlerFunc(h.getProductPreferenceModel))
+	sub.Handle("PUT /api/products/{id}/preference-model", http.HandlerFunc(h.putProductPreferenceModel))
+	sub.Handle("GET /api/products/{id}/product-schedule", http.HandlerFunc(h.getProductSchedule))
+	sub.Handle("PATCH /api/products/{id}/product-schedule", http.HandlerFunc(h.patchProductSchedule))
 	sub.Handle("GET /api/products/{id}/research-cycles", http.HandlerFunc(h.listProductResearchCycles))
 	sub.Handle("GET /api/products/{id}/tasks", http.HandlerFunc(h.listProductTasks))
 	sub.Handle("GET /api/products/{id}/costs/breakdown", http.HandlerFunc(h.productCostBreakdown))
@@ -52,6 +57,8 @@ func NewRouter(cfg Config, h *Handlers) http.Handler {
 	sub.Handle("POST /api/tasks/{id}/stall-nudge", http.HandlerFunc(h.nudgeStallTask))
 	sub.Handle("POST /api/convoys", http.HandlerFunc(h.createConvoy))
 	sub.Handle("GET /api/convoys/{id}", http.HandlerFunc(h.getConvoy))
+	sub.Handle("GET /api/convoys/{id}/mail", http.HandlerFunc(h.listConvoyMail))
+	sub.Handle("POST /api/convoys/{id}/mail", http.HandlerFunc(h.postConvoyMail))
 	sub.Handle("POST /api/convoys/{id}/dispatch-ready", http.HandlerFunc(h.dispatchConvoy))
 	// MC-compat singular paths (locked design §1).
 	sub.Handle("POST /api/convoy", http.HandlerFunc(h.createConvoy))
@@ -66,6 +73,7 @@ func NewRouter(cfg Config, h *Handlers) http.Handler {
 	sub.Handle("POST /api/agents/{id}/mailbox", http.HandlerFunc(h.postAgentMailbox))
 	sub.Handle("POST /api/openclaw/proxy", http.HandlerFunc(h.openclawStub))
 	sub.Handle("GET /api/workspaces", http.HandlerFunc(h.workspacesView))
+	sub.Handle("GET /api/operations-log", http.HandlerFunc(h.listOperationsLog))
 	sub.Handle("GET /api/settings", http.HandlerFunc(h.settingsStub))
 
 	mux.Handle("/", AuthMiddleware(cfg, sub))

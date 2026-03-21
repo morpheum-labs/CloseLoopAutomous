@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.12
 	github.com/google/go-github/v66 v66.0.0
 	github.com/google/uuid v1.6.0
+	github.com/hibiken/asynq v0.24.1
 	modernc.org/sqlite v1.34.5
 )
 
@@ -15,7 +16,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
-	github.com/hibiken/asynq v0.24.1 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/redis/go-redis/v9 v9.0.3 // indirect

@@ -9,8 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hibiken/asynq"
+
 	"github.com/closeloopautomous/arms/internal/adapters/httpapi"
 	"github.com/closeloopautomous/arms/internal/config"
+	"github.com/closeloopautomous/arms/internal/jobs"
 	"github.com/closeloopautomous/arms/internal/platform"
 )
 
@@ -29,23 +32,43 @@ func main() {
 	defer func() { _ = app.Close() }()
 
 	if cfg.AutopilotTickSec > 0 {
-		go func() {
-			t := time.NewTicker(time.Duration(cfg.AutopilotTickSec) * time.Second)
-			defer t.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					err := app.Handlers.Autopilot.TickScheduled(tickCtx, time.Now())
-					cancel()
-					if err != nil {
-						slog.Debug("autopilot tick", "err", err)
+		if cfg.RedisAddr != "" {
+			client := asynq.NewClient(asynq.RedisClientOpt{Addr: cfg.RedisAddr})
+			defer func() { _ = client.Close() }()
+			go func() {
+				t := time.NewTicker(time.Duration(cfg.AutopilotTickSec) * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						_, err := client.Enqueue(asynq.NewTask(jobs.TypeAutopilotTick, nil), asynq.Queue(jobs.QueueDefault))
+						if err != nil {
+							slog.Debug("autopilot enqueue", "err", err)
+						}
 					}
 				}
-			}
-		}()
+			}()
+		} else {
+			go func() {
+				t := time.NewTicker(time.Duration(cfg.AutopilotTickSec) * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+						err := app.Handlers.Autopilot.TickScheduled(tickCtx, time.Now())
+						cancel()
+						if err != nil {
+							slog.Debug("autopilot tick", "err", err)
+						}
+					}
+				}
+			}()
+		}
 	}
 
 	handler := httpapi.NewRouter(cfg, app.Handlers)
@@ -73,7 +96,11 @@ func main() {
 		authMode = "HTTP Basic (ARMS_ACL)"
 	}
 	if cfg.AutopilotTickSec > 0 {
-		slog.Info("arms autopilot", "tick_sec", cfg.AutopilotTickSec)
+		if cfg.RedisAddr != "" {
+			slog.Info("arms autopilot", "mode", "asynq_enqueue", "redis", cfg.RedisAddr, "tick_sec", cfg.AutopilotTickSec)
+		} else {
+			slog.Info("arms autopilot", "mode", "in_process", "tick_sec", cfg.AutopilotTickSec)
+		}
 	}
 	slog.Info("arms listening", "addr", cfg.ListenAddr, "auth", authMode)
 

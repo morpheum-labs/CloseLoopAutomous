@@ -68,7 +68,11 @@ func NewInMemoryApp(cfg config.Config) *App {
 	agentMail := memory.NewAgentMailboxStore()
 	hub := livefeed.NewHub()
 	agentHealth := memory.NewAgentHealthStore()
-	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, hub, hub, nil)
+	pref := memory.NewPreferenceModelStore()
+	ops := memory.NewOperationsLogStore()
+	sched := memory.NewProductScheduleStore()
+	cmail := memory.NewConvoyMailStore()
+	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, hub, hub, nil)
 	return &App{Handlers: h, Products: products, Ideas: ideas, Tasks: tasks, db: nil, cleanup: cleanup}
 }
 
@@ -89,6 +93,10 @@ func buildHandlers(
 	execAgents ports.ExecutionAgentRegistry,
 	agentMail ports.AgentMailboxRepository,
 	agentHealth ports.AgentHealthRepository,
+	preferenceModels ports.PreferenceModelRepository,
+	operationsLog ports.OperationsLogRepository,
+	productSchedules ports.ProductScheduleRepository,
+	convoyMail ports.ConvoyMailRepository,
 	hub *livefeed.Hub,
 	taskEvents ports.LiveActivityPublisher,
 	liveTX ports.LiveActivityTX,
@@ -117,6 +125,8 @@ func buildHandlers(
 		MaybePool:      maybePool,
 		Swipes:         swipes,
 		ResearchCycles: researchCycles,
+		Schedules:      productSchedules,
+		PrefModel:      preferenceModels,
 		Research:       ai.ResearchStub{},
 		Ideation:       ai.IdeationStub{},
 		Clock:          clock,
@@ -156,6 +166,7 @@ func buildHandlers(
 		Products: products,
 		Gateway:  agentGW,
 		Budget:   budgetPolicy,
+		Mail:     convoyMail,
 		Clock:    clock,
 		IDs:      ids,
 		Events:   taskEvents,
@@ -182,6 +193,9 @@ func buildHandlers(
 		LeaseTTLSec: cfg.MergeLeaseSec,
 		GitBin:      cfg.GitBin,
 	}, mergeQueue, tasks, products, prMerger, wtMerger, taskEvents, clock)
+	if mergeShip != nil {
+		taskSvc.MergeShip = mergeShip
+	}
 
 	return &httpapi.Handlers{
 		Config:         cfg,
@@ -196,5 +210,7 @@ func buildHandlers(
 		MergeQueue:     mergeQueue,
 		MergeShip:      mergeShip,
 		AgentHealth:    agentHealth,
+		PrefModel:      preferenceModels,
+		OperationsLog:  operationsLog,
 	}, gwCleanup
 }

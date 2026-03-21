@@ -8,9 +8,9 @@ Most capability lives under **`arms/`** (not always obvious from a shallow GitHu
 
 | Layer | Contents |
 |--------|-----------|
-| **HTTP API** | Products, ideas, Kanban tasks, convoys, costs, webhooks, SSE live feed — see [`docs/api-ref.md`](docs/api-ref.md) |
+| **HTTP API** | Products, ideas, Kanban tasks, convoys, costs, agents, merge queue, preference model, operations log, webhooks, SSE — see [`docs/api-ref.md`](docs/api-ref.md) |
 | **Domain** | `Product`, `Idea`, `Task` (MC-style statuses), `Convoy`, costs, autopilot tier enums — `arms/internal/domain/` |
-| **Persistence** | SQLite + versioned migrations `001`–`005` (`arms/internal/adapters/sqlite/migrations/`), optional in-memory mode |
+| **Persistence** | SQLite + versioned migrations through **016** (`arms/internal/adapters/sqlite/migrations/`), optional in-memory mode |
 | **Execution** | OpenClaw WebSocket client (`arms/internal/adapters/gateway/openclaw/`), gateway stub for tests |
 | **Realtime** | `GET /api/live/events` (SSE); **`event_outbox`** + relay when using SQLite; in-memory hub otherwise |
 | **Shipping** | `PullRequestPublisher` — REST (`go-github` + `ARMS_GITHUB_TOKEN`) or **`gh pr create`** (`ARMS_GITHUB_PR_BACKEND=gh`) |
@@ -27,7 +27,7 @@ cd arms
 go run ./cmd/arms
 ```
 
-**Docker** (SQLite volume + optional Redis for future scheduler):
+**Docker** (SQLite volume + optional Redis for Asynq-backed autopilot when you set **`ARMS_REDIS_ADDR`** + **`ARMS_AUTOPILOT_TICK_SEC`** and run **`cmd/arms-worker`**):
 
 ```bash
 docker compose -f arms/docker-compose.yml up --build
@@ -54,7 +54,7 @@ With persistence, set `DATABASE_PATH` (e.g. `./data/arms.db`); empty uses in-mem
 
 | Path | Role |
 |------|------|
-| `arms/` | Go module: `cmd/arms`, `internal/{domain,ports,adapters,application,platform,config}` |
+| `arms/` | Go module: `cmd/arms`, `cmd/arms-worker`, `internal/{domain,ports,adapters,application,platform,config,jobs}` |
 | `docs/` | API reference, gap analysis, production notes |
 | `fishtank/` | Separate area (see that tree) |
 | `.github/workflows/` | CI for `arms` |

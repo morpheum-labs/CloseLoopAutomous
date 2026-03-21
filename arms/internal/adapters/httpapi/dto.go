@@ -320,3 +320,46 @@ func (r *gitWorktreeReq) validate() error {
 	}
 	return nil
 }
+
+type putPreferenceModelReq struct {
+	ModelJSON string `json:"model_json"`
+}
+
+func (r *putPreferenceModelReq) validate() error {
+	s := strings.TrimSpace(r.ModelJSON)
+	if s == "" {
+		return fmt.Errorf("model_json is required")
+	}
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return fmt.Errorf("model_json must be valid JSON")
+	}
+	return nil
+}
+
+type patchProductScheduleReq struct {
+	Enabled  *bool   `json:"enabled,omitempty"`
+	SpecJSON *string `json:"spec_json,omitempty"`
+}
+
+func (r *patchProductScheduleReq) validate() error {
+	if r.Enabled == nil && r.SpecJSON == nil {
+		return fmt.Errorf("at least one of enabled, spec_json is required")
+	}
+	return nil
+}
+
+type postConvoyMailReq struct {
+	SubtaskID string `json:"subtask_id"`
+	Body      string `json:"body"`
+}
+
+func (r *postConvoyMailReq) validate() error {
+	if strings.TrimSpace(r.SubtaskID) == "" {
+		return fmt.Errorf("subtask_id is required")
+	}
+	if strings.TrimSpace(r.Body) == "" {
+		return fmt.Errorf("body is required")
+	}
+	return nil
+}

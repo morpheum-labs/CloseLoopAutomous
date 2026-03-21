@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -16,6 +17,8 @@ type Service struct {
 	MaybePool      ports.MaybePoolRepository // optional; nil skips pool persistence
 	Swipes         ports.SwipeHistoryRepository // optional; nil skips persisted swipe log
 	ResearchCycles ports.ResearchCycleRepository // optional; append-only history on successful research
+	Schedules      ports.ProductScheduleRepository // optional; nil = all products eligible for cadence ticks
+	PrefModel      ports.PreferenceModelRepository // optional; used by RecomputePreferenceModelFromSwipes
 	Research       ports.ResearchPort
 	Ideation       ports.IdeationPort
 	Clock          ports.Clock
@@ -191,6 +194,99 @@ func (s *Service) PromoteMaybe(ctx context.Context, ideaID domain.IdeaID) error 
 	return nil
 }
 
+// GetProductSchedule returns the schedule row or defaults (enabled, empty spec) when no row exists.
+func (s *Service) GetProductSchedule(ctx context.Context, productID domain.ProductID) (*domain.ProductSchedule, error) {
+	if _, err := s.Products.ByID(ctx, productID); err != nil {
+		return nil, err
+	}
+	if s.Schedules == nil {
+		return &domain.ProductSchedule{ProductID: productID, Enabled: true, SpecJSON: "{}"}, nil
+	}
+	row, err := s.Schedules.Get(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return &domain.ProductSchedule{ProductID: productID, Enabled: true, SpecJSON: "{}"}, nil
+	}
+	return row, nil
+}
+
+// UpsertProductSchedule persists product_schedules (503 when store not wired).
+func (s *Service) UpsertProductSchedule(ctx context.Context, productID domain.ProductID, enabled bool, specJSON string) (*domain.ProductSchedule, error) {
+	if s.Schedules == nil {
+		return nil, domain.ErrNotConfigured
+	}
+	if _, err := s.Products.ByID(ctx, productID); err != nil {
+		return nil, err
+	}
+	if specJSON == "" {
+		specJSON = "{}"
+	}
+	now := s.Clock.Now()
+	row := &domain.ProductSchedule{
+		ProductID: productID,
+		Enabled:   enabled,
+		SpecJSON:  specJSON,
+		UpdatedAt: now,
+	}
+	if err := s.Schedules.Upsert(ctx, row); err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+func (s *Service) scheduleAllowsAutopilot(ctx context.Context, pid domain.ProductID) bool {
+	if s.Schedules == nil {
+		return true
+	}
+	row, err := s.Schedules.Get(ctx, pid)
+	if err != nil || row == nil {
+		return true
+	}
+	return row.Enabled
+}
+
+// RecomputePreferenceModelFromSwipes aggregates swipe_history into preference_models (baseline heuristic; not ML).
+func (s *Service) RecomputePreferenceModelFromSwipes(ctx context.Context, productID domain.ProductID, limit int) (string, error) {
+	if s.PrefModel == nil || s.Swipes == nil {
+		return "", fmt.Errorf("%w: preference_model or swipe_history not configured", domain.ErrInvalidInput)
+	}
+	if _, err := s.Products.ByID(ctx, productID); err != nil {
+		return "", err
+	}
+	if limit <= 0 || limit > 5000 {
+		limit = 500
+	}
+	swipes, err := s.Swipes.ListByProduct(ctx, productID, limit)
+	if err != nil {
+		return "", err
+	}
+	counts := make(map[string]int)
+	for i := range swipes {
+		k := swipes[i].Decision
+		if k == "" {
+			continue
+		}
+		counts[k]++
+	}
+	payload := map[string]any{
+		"source":       "swipe_history_aggregate",
+		"counts":       counts,
+		"sample_size":  len(swipes),
+		"generated_at": s.Clock.Now().UTC().Format(time.RFC3339Nano),
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	now := s.Clock.Now()
+	if err := s.PrefModel.Upsert(ctx, productID, string(b), now); err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // TickScheduled runs due research/ideation steps from cadence fields (best-effort; errors are skipped per product).
 func (s *Service) TickScheduled(ctx context.Context, now time.Time) error {
 	list, err := s.Products.ListAll(ctx)
@@ -199,6 +295,9 @@ func (s *Service) TickScheduled(ctx context.Context, now time.Time) error {
 	}
 	for i := range list {
 		p := &list[i]
+		if !s.scheduleAllowsAutopilot(ctx, p.ID) {
+			continue
+		}
 		if p.ResearchCadenceSec <= 0 || p.Stage != domain.StageResearch {
 			continue
 		}
@@ -221,6 +320,9 @@ func (s *Service) TickScheduled(ctx context.Context, now time.Time) error {
 	}
 	for i := range list {
 		p := &list[i]
+		if !s.scheduleAllowsAutopilot(ctx, p.ID) {
+			continue
+		}
 		if p.IdeationCadenceSec <= 0 || p.Stage != domain.StageIdeation {
 			continue
 		}

@@ -128,3 +128,80 @@ func TestTickScheduledCadence(t *testing.T) {
 		t.Fatalf("last ideation: %v", p2.LastAutoIdeationAt)
 	}
 }
+
+func TestTickScheduledSkippedWhenScheduleDisabled(t *testing.T) {
+	ctx := context.Background()
+	t0 := time.Unix(1800000000, 0).UTC()
+	clock := timeadapter.Fixed{T: t0}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	ideas := memory.NewIdeaStore()
+	sched := memory.NewProductScheduleStore()
+	svc := &Service{
+		Products:  products,
+		Ideas:     ideas,
+		MaybePool: memory.NewMaybePoolStore(),
+		Schedules: sched,
+		Research:  ai.ResearchStub{},
+		Ideation:  ai.IdeationStub{},
+		Clock:     clock,
+		Identities: ids,
+	}
+	p := &domain.Product{
+		ID:                 "prod-1",
+		Name:               "x",
+		Stage:              domain.StageResearch,
+		WorkspaceID:        "w",
+		ResearchCadenceSec: 1,
+		UpdatedAt:          t0,
+	}
+	_ = products.Save(ctx, p)
+	_ = sched.Upsert(ctx, &domain.ProductSchedule{ProductID: p.ID, Enabled: false, SpecJSON: "{}", UpdatedAt: t0})
+
+	if err := svc.TickScheduled(ctx, t0.Add(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	p1, _ := products.ByID(ctx, p.ID)
+	if p1.Stage != domain.StageResearch {
+		t.Fatalf("schedule disabled: want still research got %s", p1.Stage)
+	}
+}
+
+func TestRecomputePreferenceModelFromSwipes(t *testing.T) {
+	ctx := context.Background()
+	clock := timeadapter.Fixed{T: time.Unix(1700000000, 0)}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	ideas := memory.NewIdeaStore()
+	swipes := memory.NewSwipeHistoryStore()
+	pref := memory.NewPreferenceModelStore()
+	svc := &Service{
+		Products:   products,
+		Ideas:      ideas,
+		Swipes:     swipes,
+		PrefModel:  pref,
+		Research:   ai.ResearchStub{},
+		Ideation:   ai.IdeationStub{},
+		Clock:      clock,
+		Identities: ids,
+	}
+	p := &domain.Product{ID: "p1", Name: "n", Stage: domain.StagePlanning, WorkspaceID: "w", UpdatedAt: clock.Now()}
+	_ = products.Save(ctx, p)
+	_ = swipes.Append(ctx, domain.IdeaID("i1"), p.ID, "yes", clock.Now())
+	_ = swipes.Append(ctx, domain.IdeaID("i2"), p.ID, "maybe", clock.Now())
+
+	js, err := svc.RecomputePreferenceModelFromSwipes(ctx, p.ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if js == "" {
+		t.Fatal("empty json")
+	}
+	mj, _, ok, _ := pref.Get(ctx, p.ID)
+	if !ok {
+		t.Fatal("want preference row")
+	}
+	if mj != js {
+		t.Fatalf("stored != returned")
+	}
+}

@@ -55,6 +55,9 @@ func mapDomainErr(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, domain.ErrMergeShipBusy):
 		writeError(w, http.StatusServiceUnavailable, "merge_lease_busy", err.Error())
 		return true
+	case errors.Is(err, domain.ErrNotConfigured):
+		writeError(w, http.StatusServiceUnavailable, "not_configured", err.Error())
+		return true
 	default:
 		return false
 	}

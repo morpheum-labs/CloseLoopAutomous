@@ -41,7 +41,7 @@ import (
 //   - ARMS_MERGE_METHOD — github merge method: merge | squash | rebase (default merge)
 //   - ARMS_MERGE_LEASE_SEC — lease TTL for merge-queue ship (default 90)
 //   - ARMS_MERGE_LEASE_OWNER — optional instance id for queue leases (default hostname)
-//   - ARMS_REDIS_ADDR — optional Redis address (e.g. localhost:6379) for cmd/arms-worker Asynq consumer; HTTP server ignores it today
+//   - ARMS_REDIS_ADDR — optional Redis (e.g. localhost:6379). When set with ARMS_AUTOPILOT_TICK_SEC>0, cmd/arms enqueues arms:autopilot_tick on that interval; cmd/arms-worker consumes and runs autopilot.Service.TickScheduled. Without Redis, cmd/arms runs the tick in-process as before.
 type Config struct {
 	ListenAddr                  string
 	MCAPIToken                  string

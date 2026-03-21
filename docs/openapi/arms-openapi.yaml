@@ -10,6 +10,8 @@ info:
 
     **Correlation:** responses include `X-Request-ID` (echo client header or server-generated UUID).
 
+    Tags include **Ops** (`GET /api/operations-log`) and **Ideas** (preference-model routes alongside swipes).
+
     Hand-maintained; update when routes or payloads change.
   version: 0.1.0
 
@@ -27,6 +29,7 @@ tags:
   - name: Stubs
   - name: Webhooks
   - name: Live
+  - name: Ops
 
 components:
   securitySchemes:
@@ -64,6 +67,88 @@ components:
       properties:
         error: { type: string }
         code: { type: string }
+
+    PreferenceModelResponse:
+      type: object
+      required: [product_id, model_json, source, updated_at]
+      properties:
+        product_id: { type: string }
+        model_json: { type: string }
+        source:
+          type: string
+          enum: [preference_models, legacy]
+        updated_at: { type: string, format: date-time }
+
+    PutPreferenceModelRequest:
+      type: object
+      required: [model_json]
+      properties:
+        model_json: { type: string, description: Must be valid JSON when parsed }
+
+    PreferenceModelRecomputeResponse:
+      type: object
+      properties:
+        product_id: { type: string }
+        model_json: { type: string }
+        source: { type: string, example: preference_models }
+
+    ProductScheduleResponse:
+      type: object
+      required: [product_id, enabled, spec_json]
+      properties:
+        product_id: { type: string }
+        enabled: { type: boolean }
+        spec_json: { type: string }
+        updated_at: { type: string, format: date-time }
+
+    PatchProductScheduleRequest:
+      type: object
+      description: At least one of enabled or spec_json is required.
+      properties:
+        enabled: { type: boolean }
+        spec_json: { type: string }
+
+    ConvoyMailMessage:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        convoy_id: { type: string }
+        subtask_id: { type: string }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ConvoyMailListResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items: { $ref: "#/components/schemas/ConvoyMailMessage" }
+
+    PostConvoyMailRequest:
+      type: object
+      required: [subtask_id, body]
+      properties:
+        subtask_id: { type: string }
+        body: { type: string }
+
+    OperationsLogEntry:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        actor: { type: string }
+        action: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        detail_json: { type: string }
+        product_id: { type: string }
+
+    OperationsLogResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/OperationsLogEntry" }
 
     Product:
       type: object
@@ -454,6 +539,156 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/products/{id}/preference-model/recompute:
+    post:
+      tags: [Ideas]
+      summary: Recompute preference model from swipe_history
+      description: |
+        Aggregates recent swipe_history into JSON and upserts `preference_models`.
+        Query `limit` defaults to 500 (server may cap higher values).
+      parameters:
+        - $ref: "#/components/parameters/productId"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferenceModelRecomputeResponse" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/products/{id}/product-schedule:
+    get:
+      tags: [Products]
+      summary: Get product autopilot schedule row
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductScheduleResponse" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      tags: [Products]
+      summary: Upsert product schedule (gates TickScheduled when disabled)
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchProductScheduleRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductScheduleResponse" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: product_schedules store not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/products/{id}/preference-model:
+    get:
+      tags: [Ideas]
+      summary: Get preference model (dedicated row or legacy product field)
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferenceModelResponse" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      tags: [Ideas]
+      summary: Upsert preference_models row
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutPreferenceModelRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreferenceModelResponse" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/operations-log:
+    get:
+      tags: [Ops]
+      summary: List operations audit entries
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - name: product_id
+          in: query
+          schema: { type: string }
+        - name: action
+          in: query
+          schema: { type: string }
+        - name: resource_type
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          description: RFC3339 or RFC3339Nano; entries with created_at >= since (UTC)
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationsLogResponse" }
+        "400":
+          description: Invalid query (e.g. since parse)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/products/{id}/tasks:
     get:
       tags: [Tasks]
@@ -679,6 +914,61 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Convoy" }
+
+  /api/convoys/{id}/mail:
+    get:
+      tags: [Convoys]
+      summary: List inter-subtask mail for a convoy
+      parameters:
+        - $ref: "#/components/parameters/convoyId"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConvoyMailListResponse" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Convoy mail store not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      tags: [Convoys]
+      summary: Append a mail message from a subtask
+      parameters:
+        - $ref: "#/components/parameters/convoyId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostConvoyMailRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Convoy mail store not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/convoys/{id}/dispatch-ready:
     post:

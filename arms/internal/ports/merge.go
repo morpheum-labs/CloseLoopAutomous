@@ -18,3 +18,8 @@ type WorktreeMergeInput struct {
 	BaseBranch string
 	HeadBranch string
 }
+
+// MergeQueueShipper completes the FIFO merge queue head for a task (optional automation hook).
+type MergeQueueShipper interface {
+	Complete(ctx context.Context, taskID domain.TaskID, skipRealMerge bool) error
+}

@@ -3,6 +3,7 @@ package convoy
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/closeloopautomous/arms/internal/domain"
@@ -16,6 +17,7 @@ type Service struct {
 	Products ports.ProductRepository
 	Gateway  ports.AgentGateway
 	Budget   ports.BudgetPolicy // optional; when set, enforces caps per subtask dispatch (like task.Dispatch)
+	Mail     ports.ConvoyMailRepository // optional; nil → mail routes return not configured
 	Clock    ports.Clock
 	IDs      ports.IdentityGenerator
 	Events   ports.LiveActivityPublisher // optional: SSE / outbox on dispatch + subtask completion
@@ -30,6 +32,9 @@ func (s *Service) Create(ctx context.Context, parent domain.TaskID, productID do
 		if subtasks[i].ID == "" {
 			subtasks[i].ID = s.IDs.NewSubtaskID()
 		}
+	}
+	if err := domain.ValidateConvoySubtasks(subtasks); err != nil {
+		return nil, err
 	}
 	c := &domain.Convoy{
 		ID:        s.IDs.NewConvoyID(),
@@ -116,6 +121,43 @@ func (s *Service) DispatchReady(ctx context.Context, convoyID domain.ConvoyID, e
 		}
 	}
 	return s.Convoys.Save(ctx, c)
+}
+
+// PostMail appends inter-subtask mail for a convoy.
+func (s *Service) PostMail(ctx context.Context, convoyID domain.ConvoyID, subtaskID domain.SubtaskID, body string) error {
+	if s.Mail == nil {
+		return domain.ErrNotConfigured
+	}
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return fmt.Errorf("%w: body required", domain.ErrInvalidInput)
+	}
+	c, err := s.Convoys.ByID(ctx, convoyID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range c.Subtasks {
+		if c.Subtasks[i].ID == subtaskID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("%w: unknown subtask_id for convoy", domain.ErrInvalidInput)
+	}
+	return s.Mail.Append(ctx, convoyID, subtaskID, body, s.Clock.Now())
+}
+
+// ListMail returns newest-first mail for a convoy.
+func (s *Service) ListMail(ctx context.Context, convoyID domain.ConvoyID, limit int) ([]domain.ConvoyMailMessage, error) {
+	if s.Mail == nil {
+		return nil, domain.ErrNotConfigured
+	}
+	if _, err := s.Convoys.ByID(ctx, convoyID); err != nil {
+		return nil, err
+	}
+	return s.Mail.ListByConvoy(ctx, convoyID, limit)
 }
 
 // CompleteSubtask marks a dispatched subtask finished (typically via agent-completion webhook).

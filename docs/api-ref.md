@@ -54,6 +54,11 @@ Common `code` values from domain mapping include `not_found`, `invalid_transitio
 | GET | `/api/products/{id}/ideas` | — | `{ "ideas": [ … ] }` |
 | GET | `/api/products/{id}/maybe-pool` | — | `{ "ideas": [ … ] }` for ideas swiped `maybe`. |
 | GET | `/api/products/{id}/swipe-history` | — | Query: optional `limit` (default 100, max 500). `{ "swipes": [ { id, idea_id, product_id, decision, created_at } ] }`, newest first (audit log; complements `preference_model_json`). |
+| GET | `/api/products/{id}/preference-model` | — | `{ "product_id", "model_json", "source": "preference_models" \| "legacy", "updated_at" }`. Uses dedicated **`preference_models`** row when present; otherwise falls back to **`preference_model_json`** on the product (default empty legacy → `[]`). |
+| PUT | `/api/products/{id}/preference-model` | `{ "model_json": "<JSON string>" }` | Upserts **`preference_models`** for the product (`model_json` must parse as JSON). Response matches GET with **`source`: `preference_models`**. |
+| POST | `/api/products/{id}/preference-model/recompute` | — | Query: optional **`limit`** (default 500, max 5000). Aggregates **`swipe_history`** decision counts into **`preference_models`** JSON (`source`, `counts`, `sample_size`). |
+| GET | `/api/products/{id}/product-schedule` | — | **`product_schedules`** row or defaults: **`enabled`** (default true when no row), **`spec_json`**, optional **`updated_at`**. |
+| PATCH | `/api/products/{id}/product-schedule` | At least one of **`enabled`**, **`spec_json`** | Upserts schedule. When **`enabled`** is **`false`**, **`TickScheduled`** skips that product (autopilot cadence). **503** if schedule store not wired. |
 | GET | `/api/products/{id}/research-cycles` | — | Query: optional `limit` (default 50, max 500). `{ "research_cycles": [ { id, product_id, summary_snapshot, created_at } ] }` — append-only history when each **`POST …/research`** succeeds (SQLite/memory with persistence). |
 | GET | `/api/products/{id}/merge-queue` | — | Query: optional `limit` (default 50, max 500). Pending rows FIFO by `id`; entries may include **`lease_owner`**, **`lease_expires_at`**, **`merge_ship_state`**, **`merged_sha`**, **`merge_error`**, **`conflict_files`** after ship attempts. **503** if merge queue is not configured. |
 | POST | `/api/ideas/{id}/swipe` | `decision`: `pass` \| `maybe` \| `yes` \| `now` | Appends to `preference_model_json`; `maybe` enqueues pool. |
@@ -70,7 +75,7 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 | GET | `/api/products/{id}/tasks` | — | `{ "tasks": [ … ] }`, newest first. 404 if product missing. |
 | POST | `/api/tasks` | `idea_id`, `spec` | Creates task in **`planning`** (idea must be approved). |
 | GET | `/api/tasks/{id}` | — | |
-| PATCH | `/api/tasks/{id}` | Any of: `status`, `status_reason`, `clarifications_json` | At least one field required. Clarifications only while in `planning`. **Full-auto:** when product `automation_tier` is **`full_auto`**, moving **`testing` → `review`** or **`in_progress` → `review`** may **auto-open a PR** if the task already has **`pull_request_head_branch`** set and **`pull_request_url`** is still empty (best-effort; uses same shipper as `POST …/pull-request`). |
+| PATCH | `/api/tasks/{id}` | Any of: `status`, `status_reason`, `clarifications_json` | At least one field required. Clarifications only while in `planning`. **Full-auto:** when product `automation_tier` is **`full_auto`**, moving **`testing` → `review`** or **`in_progress` → `review`** may **auto-open a PR** if the task already has **`pull_request_head_branch`** set and **`pull_request_url`** is still empty (best-effort; uses same shipper as `POST …/pull-request`). When a task reaches **`done`** under **`full_auto`**, the server **best-effort** calls merge-queue **`Complete`** (same as **`POST …/merge-queue/complete`**) so **`ARMS_MERGE_BACKEND=github|local`** can ship without a separate HTTP call if this task owns the FIFO head. |
 | POST | `/api/tasks/{id}/plan/approve` | Optional `{ "spec" }` | `planning` → `inbox`, `plan_approved: true`. |
 | POST | `/api/tasks/{id}/plan/reject` | Optional `{ "status_reason" }` | Back to **`planning`** from **`inbox`** or **`assigned`** (blocked after dispatch / `external_ref` set). |
 | POST | `/api/tasks/{id}/dispatch` | `estimated_cost` (number) | Requires **`assigned`** + approved plan. Enforces **`budget.Composite`** (caps + default cumulative). **402** + **`budget_exceeded`** if `estimated_cost` would exceed allowed spend. |
@@ -80,7 +85,7 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 | GET | `/api/tasks/{id}/checkpoints` | — | Query: optional `limit` (default 50, max 500). `{ "checkpoints": [ { id, task_id, payload, created_at } ] }` newest first. |
 | POST | `/api/tasks/{id}/checkpoint/restore` | `{ "history_id": <int> }` | Restores payload via same rules as recording a checkpoint. |
 | POST | `/api/tasks/{id}/checkpoint` | `payload` | Appends **`checkpoint_history`** and updates latest `checkpoints` row + task. |
-| POST | `/api/tasks/{id}/complete` | — | **`done`** from `in_progress` / `testing` / `review`. With SQLite, **`task_agent_health`** **`completed`** and SSE **`task_completed`** are written in the **same transaction** as the task row. |
+| POST | `/api/tasks/{id}/complete` | — | **`done`** from `in_progress` / `testing` / `review`. With SQLite, **`task_agent_health`** **`completed`** and SSE **`task_completed`** are written in the **same transaction** as the task row. **`full_auto`:** after success, same **best-effort** merge-queue **`Complete`** as Kanban **`done`**. |
 | POST | `/api/tasks/{id}/stall-nudge` | Optional `{ "note": "..." }` (empty body OK) | **Phase A** operator nudge for **`in_progress`**, **`testing`**, **`review`**, **`convoy_active`**: prepends `[stall_nudge <ts>]` to **`status_reason`**, appends **`stall_nudges[]`** to agent-health **`detail`** when health is wired, emits **`task_stall_nudged`** on the live stream. |
 
 **Typical flow:** create task → (optional) PATCH `clarifications_json` → POST `plan/approve` → PATCH `status` to `assigned` → POST `dispatch` → checkpoint / complete / webhook.
@@ -94,8 +99,10 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 | Method | Path | Body | Notes |
 |--------|------|------|--------|
 | GET | `/api/products/{id}/convoys` | — | `{ "convoys": [ … ] }` |
-| POST | `/api/convoys` | `parent_task_id`, `product_id`, `subtasks[]` with `agent_role`, optional `id`, `depends_on` | |
+| POST | `/api/convoys` | `parent_task_id`, `product_id`, `subtasks[]` with `agent_role`, optional `id`, `depends_on` | **`depends_on`** must reference subtask ids in the same payload; **cycles** and **unknown deps** → **400** **`invalid_input`**. |
 | GET | `/api/convoys/{id}` | — | |
+| GET | `/api/convoys/{id}/mail` | — | Query: optional **`limit`**. **`{ "messages": [ { id, convoy_id, subtask_id, body, created_at } ] }`**. **503** **`not_configured`** if mail store not wired. |
+| POST | `/api/convoys/{id}/mail` | `{ "subtask_id", "body" }` | Append-only convoy mail (**201** `{ "status": "ok" }`). **503** if mail not configured. |
 | POST | `/api/convoys/{id}/dispatch-ready` | JSON **`{ "estimated_cost": <number> }`** (optional; empty body = **0**) | Dispatches one ready wave of subtasks. Each subtask about to be sent is checked with **`budget.Composite`** using **`estimated_cost`** (same semantics as **`POST …/dispatch`** per dispatch). **402** **`budget_exceeded`** when caps would be exceeded. |
 
 ---
@@ -105,6 +112,14 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 | Method | Path | Body | Notes |
 |--------|------|------|--------|
 | POST | `/api/costs` | `product_id`, `task_id`, `amount`, optional `note`, optional **`agent`**, **`model`** | Same **`budget.Composite`** rules as task dispatch: **`cost_caps`** (daily / monthly / cumulative) plus default cumulative when no caps row (**`ARMS_BUDGET_DEFAULT_CAP`**). **402** + code **`budget_exceeded`** if the new amount would exceed the allowed spend. |
+
+---
+
+## Operations log (audit)
+
+| Method | Path | Body | Notes |
+|--------|------|------|-------|
+| GET | `/api/operations-log` | — | Query: **`limit`**, **`product_id`**, **`action`**, **`resource_type`**, **`since`** (RFC3339 / RFC3339Nano lower bound). `{ "entries": [ … ] }` newest first. Appends on product/task/dispatch/preference/schedule/convoy mail actions (coverage grows over time). |
 
 ---
 
@@ -174,8 +189,8 @@ Loaded via `internal/config` (`LoadFromEnv`). Commonly:
 | `ARMS_LOG_JSON` | `1` / `true` → JSON logs to stdout. |
 | `ARMS_ACCESS_LOG` | `0` / `false` / `off` / `no` → disable per-request access log lines. |
 | `ARMS_CORS_ALLOW_ORIGIN` | Optional. When set (e.g. `http://localhost:3000`), arms sends `Access-Control-Allow-Origin` for browser UIs such as Fishtank. |
-| `ARMS_AUTOPILOT_TICK_SEC` | Positive integer → in-process cadence tick interval (seconds) for scheduled research/ideation; unset or invalid → disabled. |
-| `ARMS_REDIS_ADDR` | Optional Redis address (e.g. `localhost:6379`) for **`cmd/arms-worker`** (Asynq consumer stub). The HTTP **`cmd/arms`** server does not enqueue jobs yet. |
+| `ARMS_AUTOPILOT_TICK_SEC` | Positive integer → cadence tick interval (seconds) for scheduled research/ideation; unset or invalid → disabled. **With `ARMS_REDIS_ADDR` set**, **`cmd/arms`** enqueues **`arms:autopilot_tick`** on that interval and **`cmd/arms-worker`** runs **`TickScheduled`**; **without Redis**, **`cmd/arms`** runs the tick **in-process** (same as before). |
+| `ARMS_REDIS_ADDR` | Optional Redis (e.g. `localhost:6379`) for Asynq: worker consumes **`arms`** queue; HTTP server enqueues autopilot ticks when **`ARMS_AUTOPILOT_TICK_SEC`** is also set. |
 | `ARMS_BUDGET_DEFAULT_CAP` | Default **cumulative** spend ceiling per product when **no** `cost_caps` row exists (default **100**). Set **`0`** to disable that default (no cumulative check until caps are configured). |
 | `ARMS_GITHUB_TOKEN` | PAT for PR creation when using the REST backend. If empty, **`GITHUB_TOKEN`** is used. |
 | `ARMS_GITHUB_API_URL` | Optional GitHub Enterprise API base for REST backend (e.g. `https://github.mycompany.com/api/v3/`). |
@@ -200,6 +215,6 @@ Or use **`arms/docker-compose.yml`** (named volume + defaults). Set `MC_API_TOKE
 
 For production deployment (TLS, secrets, webhooks behind proxies), see **[arms-production-hardening.md](arms-production-hardening.md)**.
 
-**Worker binary:** from `arms/`, `go build -o arms-worker ./cmd/arms-worker` — run with **`ARMS_REDIS_ADDR`** set; consumes Asynq queue **`arms`** (handler **`arms:ping`** is a no-op placeholder for future autopilot offload).
+**Worker binary:** from `arms/`, `go build -o arms-worker ./cmd/arms-worker` — run with **`ARMS_REDIS_ADDR`** and the same **`DATABASE_PATH`** (and related env) as **`cmd/arms`**; consumes queue **`arms`**, handling **`arms:autopilot_tick`** (runs **`autopilot.Service.TickScheduled`**) and **`arms:ping`** (no-op smoke task).
 
 **Integration tests (module `arms/`):** `go test -tags=integration ./internal/integration/...` — end-to-end HTTP against an in-memory app and stub agent gateway. CI runs the same via `.github/workflows/arms.yml` when `arms/` changes.

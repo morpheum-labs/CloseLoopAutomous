@@ -40,6 +40,16 @@ Outbound **callers** that POST to `arms` (for example an agent runtime notifying
 
 ---
 
+## Background worker (`cmd/arms-worker`) and Redis
+
+When **`ARMS_REDIS_ADDR`** and **`ARMS_AUTOPILOT_TICK_SEC`** are set, **`cmd/arms`** enqueues **`arms:autopilot_tick`** on Asynq; **`cmd/arms-worker`** must run separately with the **same** **`DATABASE_PATH`** (and other DB-related env) so scheduled research/ideation sees the same SQLite file as the API.
+
+- Treat Redis as **non-durable** scheduling metadata only; the source of truth remains SQLite (or in-memory when **`DATABASE_PATH`** is empty—in that case the worker is still useful for integration tests that point at a file DB).
+- Run **one worker process** per Redis + DB pair unless you intentionally scale out (duplicate ticks are wasteful but **`TickScheduled`** should be safe to repeat; verify product cadence fields idempotency for your workload).
+- Lock down Redis (password, VPC) like any job broker; it carries task payloads metadata only for the current queue implementation.
+
+---
+
 ## Container notes
 
 - The **`arms/Dockerfile`** runs as **`nobody`** and ships **CA certificates** for outbound TLS (OpenClaw). Keep the image updated for base image security patches.
@@ -63,5 +73,5 @@ Rate limiting, IP allowlists, mTLS for the REST API, and automated secret rotati
 
 ## Related
 
-- [api-ref.md](api-ref.md) — HTTP API and auth.
-- [arms-mission-control-gap-todos.md](arms-mission-control-gap-todos.md) — parity backlog with Mission Control.
+- [api-ref.md](api-ref.md) — HTTP API, auth, env vars, worker binary notes.
+- [arms-mission-control-gap-todos.md](arms-mission-control-gap-todos.md) — parity backlog with Mission Control (schema version, Asynq slices).

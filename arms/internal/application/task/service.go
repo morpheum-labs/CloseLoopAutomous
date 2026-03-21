@@ -26,6 +26,7 @@ type Service struct {
 	Gate         *ProductGate               // optional: per-product mutex (e.g. completion)
 	Ship         ports.PullRequestPublisher // GitHub / noop
 	AgentHealth  ports.AgentHealthRepository // optional: stall nudge heartbeats
+	MergeShip    ports.MergeQueueShipper     // optional: full_auto merge-queue completion on task done
 }
 
 // CreateFromApprovedIdea starts the Kanban in planning until ApprovePlan moves to inbox.
@@ -136,7 +137,26 @@ func (s *Service) SetKanbanStatus(ctx context.Context, taskID domain.TaskID, to 
 		return err
 	}
 	_ = s.tryAutoOpenPRIfApplicable(ctx, taskID, from, to)
+	if to == domain.StatusDone {
+		s.maybeAutoMergeShip(ctx, taskID)
+	}
 	return nil
+}
+
+// maybeAutoMergeShip runs merge-queue ship for full_auto products when a task reaches done (best-effort).
+func (s *Service) maybeAutoMergeShip(ctx context.Context, taskID domain.TaskID) {
+	if s.MergeShip == nil {
+		return
+	}
+	t, err := s.Tasks.ByID(ctx, taskID)
+	if err != nil || t.Status != domain.StatusDone {
+		return
+	}
+	p, err := s.Products.ByID(ctx, t.ProductID)
+	if err != nil || p.AutomationTier != domain.TierFullAuto {
+		return
+	}
+	_ = s.MergeShip.Complete(ctx, taskID, false)
 }
 
 // tryAutoOpenPRIfApplicable opens a PR when entering review under full_auto if head branch is known and no PR yet.
@@ -384,10 +404,16 @@ func (s *Service) Complete(ctx context.Context, taskID domain.TaskID) error {
 	run := func() error {
 		return s.Tasks.TryComplete(ctx, taskID, s.Clock.Now())
 	}
+	var runErr error
 	if s.Gate != nil {
-		return s.Gate.WithLock(t.ProductID, run)
+		runErr = s.Gate.WithLock(t.ProductID, run)
+	} else {
+		runErr = run()
 	}
-	return run()
+	if runErr == nil {
+		s.maybeAutoMergeShip(ctx, taskID)
+	}
+	return runErr
 }
 
 // UsesLiveActivityTX is true when task completion can persist agent health + outbox in the same SQLite transaction.
@@ -426,10 +452,16 @@ func (s *Service) CompleteWithLiveActivity(ctx context.Context, taskID domain.Ta
 		}
 		return nil
 	}
+	var runErr error
 	if s.Gate != nil {
-		return s.Gate.WithLock(productID, run)
+		runErr = s.Gate.WithLock(productID, run)
+	} else {
+		runErr = run()
 	}
-	return run()
+	if runErr == nil {
+		s.maybeAutoMergeShip(ctx, taskID)
+	}
+	return runErr
 }
 
 // NudgeStall records an operator nudge for tasks in active execution statuses (Phase A manual policy).
