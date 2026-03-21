@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/closeloopautomous/arms/internal/application/livefeed"
 	"github.com/closeloopautomous/arms/internal/domain"
 	"github.com/closeloopautomous/arms/internal/ports"
 )
@@ -22,6 +23,7 @@ type Service struct {
 	Tasks         ports.TaskRepository
 	Products      ports.ProductRepository
 	PRMerger      ports.PullRequestMerger
+	Gates         ports.PullRequestMergeGateChecker // optional; GitHub gate checks for semi_auto auto-ship
 	Worktree      ports.WorktreeMerger
 	Events        ports.LiveActivityPublisher
 	Clock         ports.Clock
@@ -29,7 +31,7 @@ type Service struct {
 }
 
 // New returns nil when queue is nil.
-func New(cfg MergeConfig, q ports.WorkspaceMergeQueueRepository, tasks ports.TaskRepository, products ports.ProductRepository, pr ports.PullRequestMerger, wt ports.WorktreeMerger, events ports.LiveActivityPublisher, clock ports.Clock) *Service {
+func New(cfg MergeConfig, q ports.WorkspaceMergeQueueRepository, tasks ports.TaskRepository, products ports.ProductRepository, pr ports.PullRequestMerger, gates ports.PullRequestMergeGateChecker, wt ports.WorktreeMerger, events ports.LiveActivityPublisher, clock ports.Clock) *Service {
 	if q == nil {
 		return nil
 	}
@@ -53,6 +55,7 @@ func New(cfg MergeConfig, q ports.WorkspaceMergeQueueRepository, tasks ports.Tas
 		Tasks:         tasks,
 		Products:      products,
 		PRMerger:      pr,
+		Gates:         gates,
 		Worktree:      wt,
 		Events:        events,
 		Clock:         clock,
@@ -70,7 +73,17 @@ type MergeConfig struct {
 }
 
 // Complete finishes the merge-queue head for taskID. When skipRealMerge, records skipped ship and advances queue.
+// Manual API calls do not enforce merge gates (operator override).
 func (s *Service) Complete(ctx context.Context, taskID domain.TaskID, skipRealMerge bool) error {
+	return s.complete(ctx, taskID, skipRealMerge, false)
+}
+
+// CompleteIfPolicyAllowsAuto runs an unattended ship when the product tier allows it and merge gates pass.
+func (s *Service) CompleteIfPolicyAllowsAuto(ctx context.Context, taskID domain.TaskID) error {
+	return s.complete(ctx, taskID, false, true)
+}
+
+func (s *Service) complete(ctx context.Context, taskID domain.TaskID, skipRealMerge, autoOnly bool) error {
 	if s == nil {
 		return domain.ErrNotFound
 	}
@@ -88,8 +101,30 @@ func (s *Service) Complete(ctx context.Context, taskID domain.TaskID, skipRealMe
 		return err
 	}
 	pol := domain.ParseMergePolicy(p.MergePolicyJSON)
-	if o := strings.ToLower(strings.TrimSpace(pol.MergeBackendOverride)); o != "" {
+	if o := strings.TrimSpace(pol.MergeBackendOverride); o != "" {
 		b = o
+	}
+
+	if autoOnly {
+		switch p.AutomationTier {
+		case domain.TierSupervised:
+			return nil
+		case domain.TierSemiAuto:
+			// gated path below before lease
+		case domain.TierFullAuto:
+			// proceed without gate enforcement
+		default:
+			return nil
+		}
+	}
+
+	if autoOnly && p.AutomationTier == domain.TierSemiAuto && !skipRealMerge {
+		if err := s.enforceAutoMergeGates(ctx, t, p, pol, b); err != nil {
+			if errors.Is(err, domain.ErrMergeGatesNotMet) {
+				return nil
+			}
+			return err
+		}
 	}
 
 	exp := s.Clock.Now().Add(s.LeaseTTL)
@@ -114,25 +149,23 @@ func (s *Service) Complete(ctx context.Context, taskID domain.TaskID, skipRealMe
 		}
 	}
 
-	finishErr := s.Queue.FinishShip(ctx, rowID, s.LeaseOwner, res, shipErr)
-	if finishErr != nil {
-		return finishErr
+	ev := ports.LiveActivityEvent{
+		Type:      "merge_ship_completed",
+		Ts:        s.Clock.Now().UTC().Format(time.RFC3339Nano),
+		ProductID: string(t.ProductID),
+		TaskID:    string(taskID),
+		Data: map[string]any{
+			"merge_queue_row_id": rowID,
+			"state":              string(res.State),
+			"merged_sha":         res.MergedSHA,
+			"error":              res.ErrorMessage,
+			"conflict_files":     res.ConflictFiles,
+		},
 	}
 
-	if s.Events != nil {
-		_ = s.Events.Publish(ctx, ports.LiveActivityEvent{
-			Type:      "merge_ship_completed",
-			Ts:        s.Clock.Now().UTC().Format(time.RFC3339Nano),
-			ProductID: string(t.ProductID),
-			TaskID:    string(taskID),
-			Data: map[string]any{
-				"merge_queue_row_id": rowID,
-				"state":              string(res.State),
-				"merged_sha":         res.MergedSHA,
-				"error":              res.ErrorMessage,
-				"conflict_files":     res.ConflictFiles,
-			},
-		})
+	finishErr := s.finishShipAndPublish(ctx, rowID, res, shipErr, ev)
+	if finishErr != nil {
+		return finishErr
 	}
 
 	if res.State == domain.MergeShipConflict || errors.Is(shipErr, domain.ErrMergeConflict) {
@@ -147,6 +180,43 @@ func (s *Service) Complete(ctx context.Context, taskID domain.TaskID, skipRealMe
 			msg = "merge failed"
 		}
 		return fmt.Errorf("%w: %s", domain.ErrShipping, msg)
+	}
+	return nil
+}
+
+func (s *Service) enforceAutoMergeGates(ctx context.Context, t *domain.Task, p *domain.Product, pol domain.MergePolicy, backend string) error {
+	g := domain.EffectiveMergeExecutionGates(p, pol)
+	if !g.RequireApprovedReview && !g.RequireCleanMergeable {
+		return nil
+	}
+	if strings.ToLower(strings.TrimSpace(backend)) != "github" {
+		return nil
+	}
+	if s.Gates == nil || t.PullRequestNumber <= 0 {
+		return domain.ErrMergeGatesNotMet
+	}
+	owner, repo, err := domain.ParseGitHubLikeOwnerRepo(p.RepoURL)
+	if err != nil {
+		return err
+	}
+	return s.Gates.CheckMergeGates(ctx, owner, repo, t.PullRequestNumber, g)
+}
+
+func (s *Service) finishShipAndPublish(ctx context.Context, rowID int64, res domain.MergeShipResult, shipErr error, ev ports.LiveActivityEvent) error {
+	useAtomic := s.Events != nil
+	if useAtomic {
+		if _, ok := s.Events.(*livefeed.OutboxPublisher); ok {
+			if ox, ok := s.Queue.(ports.MergeShipOutboxFinisher); ok {
+				return ox.FinishShipWithOutbox(ctx, rowID, s.LeaseOwner, res, shipErr, ev)
+			}
+		}
+	}
+	err := s.Queue.FinishShip(ctx, rowID, s.LeaseOwner, res, shipErr)
+	if err != nil {
+		return err
+	}
+	if s.Events != nil {
+		_ = s.Events.Publish(ctx, ev)
 	}
 	return nil
 }

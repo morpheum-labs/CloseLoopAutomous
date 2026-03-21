@@ -565,6 +565,30 @@ func (s *WorkspaceStore) Enqueue(_ context.Context, productID domain.ProductID, 
 	return nil
 }
 
+func (s *WorkspaceStore) GetPendingMergeQueueEntry(_ context.Context, rowID int64) (*domain.MergeQueueEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.mq {
+		row := &s.mq[i]
+		if row.id == rowID && row.status == "pending" {
+			return &domain.MergeQueueEntry{
+				ID:                row.id,
+				ProductID:         row.productID,
+				TaskID:            row.taskID,
+				Status:            row.status,
+				CreatedAt:         row.createdAt,
+				LeaseOwner:        row.leaseOwner,
+				LeaseExpiresAt:    row.leaseExpiresAt,
+				MergeShipState:    domain.MergeShipState(row.mergeShipState),
+				MergedSHA:         row.mergedSHA,
+				MergeError:        row.mergeError,
+				ConflictFilesJSON: row.conflictFilesJSON,
+			}, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
 func (s *WorkspaceStore) ListPendingByProduct(_ context.Context, productID domain.ProductID, limit int) ([]domain.MergeQueueEntry, error) {
 	if limit <= 0 {
 		limit = 50
@@ -761,6 +785,10 @@ func (s *WorkspaceStore) FinishShip(_ context.Context, rowID int64, leaseOwner s
 	return nil
 }
 
+func (s *WorkspaceStore) FinishShipWithOutbox(ctx context.Context, rowID int64, leaseOwner string, result domain.MergeShipResult, shipOpErr error, _ ports.LiveActivityEvent) error {
+	return s.FinishShip(ctx, rowID, leaseOwner, result, shipOpErr)
+}
+
 func (s *WorkspaceStore) ReleaseShipLease(_ context.Context, rowID int64, leaseOwner string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -777,4 +805,5 @@ func (s *WorkspaceStore) ReleaseShipLease(_ context.Context, rowID int64, leaseO
 var (
 	_ ports.WorkspacePortRepository       = (*WorkspaceStore)(nil)
 	_ ports.WorkspaceMergeQueueRepository = (*WorkspaceStore)(nil)
+	_ ports.MergeShipOutboxFinisher      = (*WorkspaceStore)(nil)
 )

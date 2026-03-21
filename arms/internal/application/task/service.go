@@ -26,7 +26,7 @@ type Service struct {
 	Gate         *ProductGate               // optional: per-product mutex (e.g. completion)
 	Ship         ports.PullRequestPublisher // GitHub / noop
 	AgentHealth  ports.AgentHealthRepository // optional: stall nudge heartbeats
-	MergeShip    ports.MergeQueueShipper     // optional: full_auto merge-queue completion on task done
+	MergeShip    ports.MergeQueueShipper     // optional: auto merge-queue completion on task done (full_auto always; semi_auto when GitHub gates pass)
 }
 
 // CreateFromApprovedIdea starts the Kanban in planning until ApprovePlan moves to inbox.
@@ -143,7 +143,7 @@ func (s *Service) SetKanbanStatus(ctx context.Context, taskID domain.TaskID, to 
 	return nil
 }
 
-// maybeAutoMergeShip runs merge-queue ship for full_auto products when a task reaches done (best-effort).
+// maybeAutoMergeShip runs merge-queue ship when a task reaches done (best-effort): full_auto always attempts ship; semi_auto only if merge gates pass.
 func (s *Service) maybeAutoMergeShip(ctx context.Context, taskID domain.TaskID) {
 	if s.MergeShip == nil {
 		return
@@ -153,10 +153,17 @@ func (s *Service) maybeAutoMergeShip(ctx context.Context, taskID domain.TaskID) 
 		return
 	}
 	p, err := s.Products.ByID(ctx, t.ProductID)
-	if err != nil || p.AutomationTier != domain.TierFullAuto {
+	if err != nil {
 		return
 	}
-	_ = s.MergeShip.Complete(ctx, taskID, false)
+	switch p.AutomationTier {
+	case domain.TierFullAuto:
+		_ = s.MergeShip.Complete(ctx, taskID, false)
+	case domain.TierSemiAuto:
+		_ = s.MergeShip.CompleteIfPolicyAllowsAuto(ctx, taskID)
+	default:
+		// supervised: merge queue completion stays manual
+	}
 }
 
 // tryAutoOpenPRIfApplicable opens a PR when entering review under full_auto if head branch is known and no PR yet.

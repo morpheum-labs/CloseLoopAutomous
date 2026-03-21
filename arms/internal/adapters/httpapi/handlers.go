@@ -1272,6 +1272,111 @@ func (h *Handlers) completeMergeQueue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "completed"})
 }
 
+func (h *Handlers) resolveMergeQueueByTask(w http.ResponseWriter, r *http.Request) {
+	if h.MergeShip == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", "merge ship not available")
+		return
+	}
+	id := domain.TaskID(r.PathValue("id"))
+	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	var req mergeQueueResolveReq
+	if b, rerr := io.ReadAll(r.Body); rerr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", rerr.Error())
+		return
+	} else if s := strings.TrimSpace(string(b)); s != "" {
+		if err := json.Unmarshal([]byte(s), &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			return
+		}
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "retry_merge"
+	}
+	var skip bool
+	switch action {
+	case "retry_merge":
+		skip = false
+	case "skip_ship":
+		skip = true
+	default:
+		writeError(w, http.StatusBadRequest, "validation", `action must be "retry_merge" or "skip_ship"`)
+		return
+	}
+	if err := h.MergeShip.Complete(r.Context(), id, skip); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"action": action})
+	h.logOperation(r.Context(), "http", "merge_queue.resolve", "task", string(id), string(detail), t.ProductID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
+func (h *Handlers) resolveMergeQueueByRow(w http.ResponseWriter, r *http.Request) {
+	if h.MergeShip == nil || h.MergeQueue == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", "merge queue not available")
+		return
+	}
+	rowID, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || rowID < 1 {
+		writeError(w, http.StatusBadRequest, "validation", "merge queue id must be a positive integer")
+		return
+	}
+	ctx := r.Context()
+	e, err := h.MergeQueue.GetPendingMergeQueueEntry(ctx, rowID)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	var req mergeQueueResolveReq
+	if b, rerr := io.ReadAll(r.Body); rerr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", rerr.Error())
+		return
+	} else if s := strings.TrimSpace(string(b)); s != "" {
+		if err := json.Unmarshal([]byte(s), &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+			return
+		}
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	if action == "" {
+		action = "retry_merge"
+	}
+	var skip bool
+	switch action {
+	case "retry_merge":
+		skip = false
+	case "skip_ship":
+		skip = true
+	default:
+		writeError(w, http.StatusBadRequest, "validation", `action must be "retry_merge" or "skip_ship"`)
+		return
+	}
+	if err := h.MergeShip.Complete(ctx, e.TaskID, skip); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]any{"merge_queue_row_id": rowID, "action": action})
+	h.logOperation(ctx, "http", "merge_queue.resolve", "merge_queue_row", strconv.FormatInt(rowID, 10), string(detail), e.ProductID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
 func (h *Handlers) listProductMergeQueue(w http.ResponseWriter, r *http.Request) {
 	if h.MergeQueue == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_configured", "merge queue not available")
@@ -1656,7 +1761,12 @@ func parseTimeRangeQuery(r *http.Request) (from, to time.Time, err error) {
 
 func productToJSON(p *domain.Product) map[string]any {
 	pol := domain.ParseMergePolicy(p.MergePolicyJSON)
-	polOut := map[string]any{"merge_method": pol.MergeMethod}
+	gates := domain.EffectiveMergeExecutionGates(p, pol)
+	polOut := map[string]any{
+		"merge_method":                 pol.MergeMethod,
+		"require_approved_review":      gates.RequireApprovedReview,
+		"require_clean_mergeable":      gates.RequireCleanMergeable,
+	}
 	if o := strings.TrimSpace(pol.MergeBackendOverride); o != "" {
 		polOut["merge_backend_override"] = o
 	}

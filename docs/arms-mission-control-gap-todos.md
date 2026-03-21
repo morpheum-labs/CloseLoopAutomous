@@ -2,7 +2,7 @@
 
 Use this as the master backlog for bringing `arms` toward Autensa/Mission Control backend parity. Check items off as you implement them.
 
-**Backlog checklist (§1–§10):** `82` done · `23` open · **~78%** complete — see **[Master backlog (all checklist items)](#master-backlog-all-checklist-items)** for the full table; _grep_ `- [x]` / `- [ ]` in this file to refresh counts after edits._
+**Backlog checklist (§1–§10):** `83` done · `23` open · **~78%** complete — see **[Master backlog (all checklist items)](#master-backlog-all-checklist-items)** for the full table; _grep_ `- [x]` / `- [ ]` in this file to refresh counts after edits._
 
 **Next priority:** **#55** (§5) — **Full Asynq scheduling for `product_schedules`** (per-row cron/delayed jobs, restart-safe), then **deprecate the in-process autopilot ticker** once that path covers the same surface as today’s global tick + schedule reads. Matches **Locked design decisions → Scheduling** and Phase **C** in the roadmap below.
 
@@ -11,6 +11,21 @@ Use this as the master backlog for bringing `arms` toward Autensa/Mission Contro
 _Re-checked against the `arms/` tree (2026-03-23): SQLite schema **v16** (`ExpectedSchemaVersion` in `internal/adapters/sqlite/migrate.go`); baseline vs “full MC” is called out so unchecked rows are not misread as “missing entirely” when a slim table or route already exists._
 
 _See also [recomendeddesign.md](recomendeddesign.md) (earlier “GoAutensa” outline); this file is the live parity checklist + locked target architecture._
+
+### Remarks — merge-queue autopilot policy & shipping (done, 2026-03)
+
+The backlog previously called out **“autopilot-driven merge policy”** and **same-transaction outbox** around external ship paths. The following is now implemented in `arms/`:
+
+| Topic | What shipped | Where to look |
+|-------|----------------|---------------|
+| **Tier → merge gates** | Defaults from **`automation_tier`**: supervised / semi_auto require **approved GitHub review** + **`mergeable_state: clean`** for *unattended* ship; **full_auto** does not. Overrides: **`merge_policy_json`** fields **`require_approved_review`**, **`require_clean_mergeable`**. Product JSON **`merge_policy`** exposes effective booleans. | `internal/domain/merge.go` — `EffectiveMergeExecutionGates`, `MergePolicy` |
+| **Semi-auto auto-ship** | On task **→ done**, **`MergeShip.CompleteIfPolicyAllowsAuto`**: runs real merge only if gates pass (silent skip if not); **`full_auto`** still uses **`Complete`** (no gate enforcement). | `internal/application/task/service.go` — `maybeAutoMergeShip`; `internal/application/mergequeue/service.go` |
+| **GitHub gate check** | **`PullRequestMergeGateChecker`** on **`GitHubPRMerger`**: latest review per user must include **APPROVED** when required; **clean** mergeable state when required. | `internal/adapters/shipping/github_merge.go` — `CheckMergeGates` |
+| **Operator override** | **`POST /api/tasks/{id}/merge-queue/complete`** (and **resolve** routes below) **do not** apply merge gates — human/operator can still force progression. | `mergequeue.Service.Complete` vs `CompleteIfPolicyAllowsAuto` |
+| **Resolve after conflict** | **`POST /api/tasks/{id}/merge-queue/resolve`** and **`POST /api/merge-queue/{rowId}/resolve`** with optional body **`{"action":"retry_merge"\|"skip_ship"}`** (default retry). | `internal/adapters/httpapi/handlers.go`, `server.go`; OpenAPI + `routes_catalog` |
+| **Same-Tx outbox on ship finish** | When live events use **`OutboxPublisher`** and the store supports it, **`FinishShipWithOutbox`** commits **merge_queue row update + `event_outbox` insert** in one SQLite transaction (no race vs relay). In-memory / hub-only paths still **finish then Publish**. | `internal/adapters/sqlite/workspace.go`; `ports.MergeShipOutboxFinisher`; `mergequeue` + `livefeed` |
+
+**Still not done** (unchanged from Phase A bullets): auto-nudge/reassign for stalls; **same-Tx outbox for PR opened** (still after GitHub round-trip); **DB leases** for task completion / product gates beyond merge-queue lease.
 
 ---
 
@@ -49,7 +64,7 @@ These resolve open questions from the backlog; implement against this table.
 | **REST naming** | Keep **plural** canonical: `/api/convoys`, `/api/tasks`, … (Go/REST convention + current code). Add **optional alias** routes (`/api/convoy/{id}` → same handler) for Next.js MC clients that expect singular paths. |
 | **Scheduling** | **Asynq (Redis) + cron** for `product_schedules` and delayed jobs; **restart-safe** vs in-process ticker. Deprecate `ARMS_AUTOPILOT_TICK_SEC` once scheduler is wired (keep env until cutover). |
 | **Device identity** | **Ed25519 `connect` block optional** via env (e.g. `ARMS_DEVICE_SIGNING=enabled`); token-only remains default. |
-| **Automation tiers** | **supervised** — PRs created; human approve/merge. **semi_auto** — auto-dispatch + **manual merge** (extend later if auto-merge desired). **full_auto** — end-to-end autopilot (dispatch + merge queue policy in autopilot + workspace). Cross-check [MC README — Automation tiers](https://github.com/crshdn/mission-control). |
+| **Automation tiers** | **supervised** — PRs created; human approve/merge; no unattended merge-queue ship on task **done**. **semi_auto** — merge-queue **auto-ship on task done** only when **GitHub merge gates** pass (approved review + `mergeable_state: clean` by default), overridable via **`merge_policy_json`**; manual **`POST …/merge-queue/complete`** still bypasses gates. **full_auto** — end-to-end autopilot including **ungated** merge-queue **`MergeShip.Complete`** on **done** (when queue/backend configured). Cross-check [MC README — Automation tiers](https://github.com/crshdn/mission-control). |
 | **Convoy DAG** | Full graph in domain + SQLite; **github.com/dominikbraun/graph** (or equivalent) for algorithms; **`convoy_subtasks` + `agent_mailbox`** persistence. |
 | **Realtime** | **Domain events + transactional outbox** → SSE `/api/live/events` (and later operator chat); avoid polling DB from handlers. |
 | **Cost caps** | **`cost_caps` table** + daily/monthly/product scope; atomic enforcement in **application/costs** (extends today’s `budget.Static`). |
@@ -82,7 +97,7 @@ Rough calendar: **~4 weeks core (A–C)** + **polish (D)**; optional future belo
 
 | Phase | Time (guide) | Deliverables |
 |-------|----------------|--------------|
-| **A — Production safety** | 1–2 wk | **Done (when `AgentHealth` wired):** MC convoy singular aliases (`/api/convoy/...`); **`GET /api/products/{id}/stalled-tasks`**; completion webhook + **`POST /api/tasks/{id}/complete`** → **`task_agent_health`** **`completed`** + **`task_completed`** outbox in **one SQLite transaction** (`LiveActivityTX.CompleteTaskWithEvent`); task **`sandbox_path` / `worktree_path`** (008–009). **Manual stall nudge:** **`POST /api/tasks/{id}/stall-nudge`** (optional JSON `{ "note" }`) → `status_reason` prefix + optional agent-health `stall_nudges[]` + SSE **`task_stall_nudged`**. **Merge queue ship:** FIFO head + **lease** + optional **real merge** (`ARMS_MERGE_BACKEND=github|local`), conflict/failure persisted on row; **`merge_ship_completed`** SSE. **Still open:** autopilot-driven merge policy (tiers), **auto**-nudge/reassign, same-Tx outbox for paths that do external I/O after DB write (e.g. PR opened), multi-instance **DB leases** for task completion / product gates beyond merge queue. |
+| **A — Production safety** | 1–2 wk | **Done (when `AgentHealth` wired):** MC convoy singular aliases (`/api/convoy/...`); **`GET /api/products/{id}/stalled-tasks`**; completion webhook + **`POST /api/tasks/{id}/complete`** → **`task_agent_health`** **`completed`** + **`task_completed`** outbox in **one SQLite transaction** (`LiveActivityTX.CompleteTaskWithEvent`); task **`sandbox_path` / `worktree_path`** (008–009). **Manual stall nudge:** **`POST /api/tasks/{id}/stall-nudge`** (optional JSON `{ "note" }`) → `status_reason` prefix + optional agent-health `stall_nudges[]` + SSE **`task_stall_nudged`**. **Merge queue ship:** FIFO head + **lease** + optional **real merge** (`ARMS_MERGE_BACKEND=github|local`), conflict/failure persisted on row; **`merge_ship_completed`** SSE; **autopilot merge policy** (tier + **`merge_policy_json`** gates, **semi_auto** gated auto-ship, **resolve** routes, **same-Tx outbox** on merge finish when SQLite outbox is wired) — see **Remarks — merge-queue autopilot policy** above. **Still open:** **auto**-nudge/reassign, same-Tx outbox for **PR opened** (still after external I/O), multi-instance **DB leases** for task completion / product gates beyond merge queue. |
 | **B — Full autonomy** | ~2 wk | Convoy: **done (baseline DAG semantics):** `convoy_subtasks.completed` (migration 011); dependents **`dispatch-ready`** only after upstream **completed**; webhook **`convoy_id` + `subtask_id`** + parent **`task_id`**; SSE **`convoy_subtask_dispatched`** / **`convoy_subtask_completed`**. **TBD:** full graph algorithms package, **mailbox**, deeper **agent health** (retries, convoy-aware dispatch). **GitHub PR** — **done:** REST (`go-github`) + optional **`gh` CLI** backend + env tokens. **TBD:** auto post-execution chain. Deeper **ideas** scoring/metadata; **`swipe_history`** table + list API (**done**); **`preference_models`** table + **`GET/PUT /api/products/{id}/preference-model`** (**done** baseline); **ML / learning loop** still **TBD**. |
 | **C — Polish** | ~1 wk | **Agent** domain + listing/health APIs (replace stub). **`product_schedules`** on **Asynq** (Redis) — **still TBD** beyond placeholder table; autopilot tick offload via Redis **done**. Optional **Ed25519** on OpenClaw `connect`. **Maybe pool** resurface / batch re-eval. ~~**HTTP aliases** `/api/convoy/*`~~ (done in A). |
 | **D — Optional future** | — | Embedded UI (e.g. HTMX/templ), Postgres adapter, pure-Go agent runtime (replace OpenClaw). |
@@ -149,7 +164,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 | 33 | 2 | Done | Checkpoint **history** + restore — `checkpoint_history` + APIs (latest still in `checkpoints`); MC **`work_checkpoints`** naming parity optional |
 | 34 | 2 | Done | `agent_mailbox` — migration **`013_agents_mailbox.sql`** + **`GET/POST /api/agents/{id}/mailbox`** (baseline); **convoy / cross-agent mail** still **TBD** (§6) |
 | 35 | 2 | Done | `workspace_ports` (4200–4299) + HTTP allocate/release |
-| 36 | 2 | Done | `workspace_merge_queue` table + pending **count** in `GET /api/workspaces`; FIFO **head** completion + **`completed_at`** on done; **real ship** optional via **`ARMS_MERGE_BACKEND=github\|local`** (lease columns, merge outcome fields, **`mergequeue` service**); query **`skip_ship=1`** for break-glass metadata-only advance; **`DELETE …/merge-queue`** cancel pending; enriched **GET …/merge-queue** + product **merge_queue_pending** / **merge_policy**; **operations_log** merge + **product.patch** (see §2) |
+| 36 | 2 | Done | `workspace_merge_queue` table + pending **count** in `GET /api/workspaces`; FIFO **head** completion + **`completed_at`** on done; **real ship** optional via **`ARMS_MERGE_BACKEND=github\|local`** (lease columns, merge outcome fields, **`mergequeue` service**); query **`skip_ship=1`**; **`DELETE …/merge-queue`**; **resolve** routes; enriched **GET …/merge-queue** + product **merge_queue_pending** / **merge_policy** (effective gates); **operations_log** merge / resolve + **product.patch**; overlap **#106** (policy + same-Tx finish outbox) |
 | 37 | 2 | Open | Broader MC parity: soft deletes, extra cascade paths, concurrency guards, ops tooling |
 | 38 | 3 | Done | Real `AgentGateway` adapter: WebSocket client — `internal/adapters/gateway/openclaw` ([coder/websocket](https://github.com/coder/websocket)) |
 | 39 | 3 | Done | Config: `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN` (env) + `OPENCLAW_DISPATCH_TIMEOUT_SEC` (default 30) + `ARMS_DEVICE_ID` (optional `X-Arms-Device-Id`) |
@@ -219,6 +234,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 | 103 | 10 | Done | Opt-in HTTP integration tests — `internal/integration/` with `//go:build integration`; run `go test -tags=integration ./internal/integration/...` (in-memory app + stub gateway; full product→task→dispatch flow) |
 | 104 | 10 | Done | CI — `.github/workflows/arms.yml` runs `go test ./...` and `-tags=integration` on `arms/**` changes |
 | 105 | 10 | Open | Contract tests against **live** OpenClaw gateway (optional env-gated job) |
+| 106 | 5–7 | Done | **Autopilot merge policy + merge-queue polish** — `EffectiveMergeExecutionGates` + **`merge_policy_json`** overrides; **`semi_auto`** **`CompleteIfPolicyAllowsAuto`** + GitHub **`CheckMergeGates`**; **`full_auto`** ungated ship on **done**; **`POST …/merge-queue/resolve`** + **`POST /api/merge-queue/{id}/resolve`**; SQLite **`FinishShipWithOutbox`** (merge row + **`event_outbox`** one transaction). Operator **`…/complete`** bypasses gates. |
 
 ---
 
@@ -267,7 +283,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 - [x] Checkpoint **history** + restore — `checkpoint_history` + APIs (latest still in `checkpoints`); MC **`work_checkpoints`** naming parity optional
 - [x] `agent_mailbox` — migration **`013_agents_mailbox.sql`** + **`GET/POST /api/agents/{id}/mailbox`** (baseline); **convoy / cross-agent mail** still **TBD** (§6)
 - [x] `workspace_ports` (4200–4299) + HTTP allocate/release
-- [x] `workspace_merge_queue` table + pending **count** in `GET /api/workspaces`; FIFO **head** completion + **`completed_at`** on done; **real ship** optional via **`ARMS_MERGE_BACKEND=github|local`** (lease columns, merge outcome fields, **`mergequeue` service**); query **`skip_ship=1`** for break-glass metadata-only advance; **`DELETE /api/tasks/{id}/merge-queue`** cancels a pending row (non-head anytime; head when no active ship lease); **`GET …/merge-queue`** returns **`head_task_id`**, **`pending_count`**, per-row **`queue_position`** / **`is_head`**; **`GET /api/products/{id}`** adds **`merge_queue_pending`** + parsed **`merge_policy`**; **`operations_log`** on enqueue / complete / cancel / **`product.patch`**
+- [x] `workspace_merge_queue` table + pending **count** in `GET /api/workspaces`; FIFO **head** completion + **`completed_at`** on done; **real ship** optional via **`ARMS_MERGE_BACKEND=github|local`** (lease columns, merge outcome fields, **`mergequeue` service**); query **`skip_ship=1`** for break-glass metadata-only advance; **`DELETE /api/tasks/{id}/merge-queue`** cancels a pending row (non-head anytime; head when no active ship lease); **`POST …/merge-queue/resolve`** + **`POST /api/merge-queue/{id}/resolve`**; **`GET …/merge-queue`** returns **`head_task_id`**, **`pending_count`**, per-row **`queue_position`** / **`is_head`**; **`GET /api/products/{id}`** adds **`merge_queue_pending`** + parsed **`merge_policy`** (incl. effective **gate** flags); **`operations_log`** on enqueue / complete / cancel / resolve / **`product.patch`**
 - [ ] Broader MC parity: soft deletes, extra cascade paths, concurrency guards, ops tooling
 
 ---
@@ -306,7 +322,8 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 - [x] Preference data: each swipe appends to **`preference_model_json`** (JSON array) **and** **`swipe_history`**; **`GET/PUT …/preference-model`** reads/writes the **`preference_models`** table (GET falls back to legacy product field when no row); **`POST …/preference-model/recompute`** aggregates **`swipe_history`** into **`preference_models`** (heuristic JSON). **ML / training loop** still **TBD**.
 - [x] Maybe pool (baseline): `maybe_pool` table + `MaybePoolRepository`; swipe `maybe` adds; `GET /api/products/{id}/maybe-pool`; `POST /api/ideas/{id}/promote-maybe` → yes + pool remove + stage advance when in swipe. Resurface / batch re-eval: still open (§2).
 - [x] Automation tiers: `automation_tier` enum `supervised` | `semi_auto` | `full_auto` on product + create/patch/JSON (behavioral differences beyond storage/TBD for dispatch).
-- [ ] Post-execution chain: test → review → **automatic** PR on transitions — **partial:** **`full_auto`** + Kanban **`testing`/`in_progress` → `review`** opens PR when **`pull_request_head_branch`** set and URL empty (best-effort); **`full_auto`** also **best-effort** **`MergeShip.Complete`** when task reaches **`done`** (merge-queue head / noop); explicit **`POST /api/tasks/{id}/pull-request`** still primary
+- [x] **Merge-queue autopilot policy** — tier-derived **merge execution gates** (`require_approved_review`, `require_clean_mergeable` defaults + **`merge_policy_json`** overrides); **`full_auto`** → **`MergeShip.Complete`** on task **done**; **`semi_auto`** → **`CompleteIfPolicyAllowsAuto`** (GitHub gates when **`ARMS_MERGE_BACKEND=github`**); **`supervised`** no unattended ship; operator **`POST …/merge-queue/complete`** / **resolve** routes **ignore** gates (**#106**).
+- [ ] Post-execution chain: test → review → **automatic** PR on transitions — **partial:** **`full_auto`** + Kanban **`testing`/`in_progress` → `review`** opens PR when **`pull_request_head_branch`** set and URL empty (best-effort); **`full_auto`** + **`semi_auto`** (gated) **best-effort** merge-queue ship when task reaches **`done`** (see previous row); explicit **`POST /api/tasks/{id}/pull-request`** still primary; **auto test** steps / richer chain still TBD
 - [x] GitHub **`PullRequestPublisher`** — `adapters/shipping` GitHub client (go-github v66) + noop; **`POST /api/tasks/{id}/pull-request`** (`head_branch`, optional `title`/`body`); **`ARMS_GITHUB_TOKEN`** / **`GITHUB_TOKEN`**; SSE **`pull_request_opened`** when URL returned.
 
 ---
@@ -333,7 +350,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 - [x] Cost breakdown — **`GET /api/products/{id}/costs/breakdown`** (`from` / `to` query RFC3339); aggregates `by_agent`, `by_model`
 - [x] Workspace isolation: **optional git worktree** (`internal/adapters/workspace` + gated HTTP); paths still **metadata** on tasks + ports; operator must set **`repo_clone_path`** on product
 - [x] Port allocation **4200–4299** — `workspace_ports` + **`POST /api/workspace/ports`** / **`DELETE /api/workspace/ports/{port}`**
-- [x] Serialized merge queue **ordering** — only FIFO **head** per product can `POST .../merge-queue/complete` (`domain.ErrNotMergeQueueHead` → 409); optional **real merge** via **`ARMS_MERGE_BACKEND=github|local`** (lease, conflict/failure left on pending row + **`merge_ship_completed`** SSE; **`skip_ship=1`** advances without forge); operator **`DELETE .../merge-queue`** to dequeue pending (see §2 workspace row)
+- [x] Serialized merge queue **ordering** — only FIFO **head** per product can `POST .../merge-queue/complete` (`domain.ErrNotMergeQueueHead` → 409); optional **real merge** via **`ARMS_MERGE_BACKEND=github|local`** (lease, conflict/failure left on pending row + **`merge_ship_completed`** SSE; **`skip_ship=1`** advances without forge); operator **`DELETE .../merge-queue`** to dequeue pending; **`POST …/merge-queue/resolve`** + **`POST /api/merge-queue/{id}/resolve`** (`retry_merge` / `skip_ship`); SQLite **same-Tx** queue finish + outbox when **`OutboxPublisher`** wired (**#106**)
 - [x] Product-scoped **in-process** lock on task **Complete** (`task.ProductGate`); multi-instance would need DB leases later
 - [x] Checkpoint **history** + **restore** — `checkpoint_history` + **`GET /api/tasks/{id}/checkpoints`**, **`POST .../checkpoint/restore`** (`history_id`); latest row still in `checkpoints`
 - [x] Agent health — **task-scoped** heartbeats + SQLite/memory + HTTP (not full MC **agent** aggregate yet)
@@ -346,7 +363,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 ## 8. Realtime and observability
 
 - [x] Domain outbox baseline — table `event_outbox` (`005_event_outbox.sql`); `internal/application/livefeed` (**Hub**, **OutboxPublisher**, **RunOutboxRelay**); SQLite path relays to SSE; in-memory path publishes directly to hub
-- [x] Same-transaction outbox for **SQLite** dispatch, checkpoint, cost, and **task completion** + agent-health **`completed`** (`LiveActivityTX`); other paths (e.g. PR opened) still best-effort after external I/O
+- [x] Same-transaction outbox for **SQLite** dispatch, checkpoint, cost, **task completion** + agent-health **`completed`** (`LiveActivityTX`), and **merge-queue ship finish** (`FinishShipWithOutbox` when events go through **`OutboxPublisher`**); other paths (e.g. **PR opened** after forge round-trip) still best-effort after external I/O
 - [x] SSE transport — `GET /api/live/events` (hello + ping + activity `data:` lines; `SSEQueryToken` when auth on)
 - [x] SSE activity (partial) — **`task_dispatched`**, **`cost_recorded`**, **`checkpoint_saved`**, **`task_completed`** (SQLite same-tx + relay; in-memory hub on complete), **`task_stall_nudged`** (operator **`POST .../stall-nudge`**), **`pull_request_opened`**, **`merge_ship_completed`**, **`convoy_subtask_dispatched`**, **`convoy_subtask_completed`**; **`?product_id=`** filter; broader catalog + agent/type filters still TBD
 - [ ] Operator chat: queued notes + direct messages (ports + storage)
@@ -384,7 +401,7 @@ Flat index of every §1–§10 row below. **Workflow:** update `- [ ]` / `- [x]`
 
 | Area            | Rough priority for a vertical slice                         |
 |-----------------|--------------------------------------------------------------|
-| SQLite + core tables | Unblocks everything else (current **v15** migrations)     |
+| SQLite + core tables | Unblocks everything else (current **v16** migrations)     |
 | HTTP + auth + tasks/products | Makes the service usable from a UI or CLI            |
 | Real OpenClaw WS   | Closes the execution-plane gap                            |
 | Webhooks           | Completes the async completion loop                       |

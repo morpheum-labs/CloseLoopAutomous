@@ -122,6 +122,8 @@ type WorkspaceMergeQueueRepository interface {
 	CountPending(ctx context.Context) (int64, error)
 	CountPendingByProduct(ctx context.Context, productID domain.ProductID) (int64, error)
 	Enqueue(ctx context.Context, productID domain.ProductID, taskID domain.TaskID, at time.Time) error
+	// GetPendingMergeQueueEntry returns a pending row by primary key, or ErrNotFound.
+	GetPendingMergeQueueEntry(ctx context.Context, rowID int64) (*domain.MergeQueueEntry, error)
 	ListPendingByProduct(ctx context.Context, productID domain.ProductID, limit int) ([]domain.MergeQueueEntry, error)
 	// CompletePendingForTask marks the pending row for this task done (serialized lane advances).
 	CompletePendingForTask(ctx context.Context, taskID domain.TaskID) error

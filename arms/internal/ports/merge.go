@@ -22,4 +22,6 @@ type WorktreeMergeInput struct {
 // MergeQueueShipper completes the FIFO merge queue head for a task (optional automation hook).
 type MergeQueueShipper interface {
 	Complete(ctx context.Context, taskID domain.TaskID, skipRealMerge bool) error
+	// CompleteIfPolicyAllowsAuto performs a real merge only when tier + merge gates allow unattended ship.
+	CompleteIfPolicyAllowsAuto(ctx context.Context, taskID domain.TaskID) error
 }

@@ -409,3 +409,8 @@ func (r *postConvoyMailReq) validate() error {
 	}
 	return nil
 }
+
+// mergeQueueResolveReq is optional JSON for conflict-resolution helpers (defaults to retry_merge).
+type mergeQueueResolveReq struct {
+	Action string `json:"action"`
+}

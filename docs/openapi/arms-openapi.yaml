@@ -55,6 +55,12 @@ components:
       in: path
       required: true
       schema: { type: string }
+    mergeQueueRowId:
+      name: id
+      in: path
+      required: true
+      description: Primary key of workspace_merge_queue (from GET /api/products/{id}/merge-queue).
+      schema: { type: integer, format: int64 }
     convoyId:
       name: id
       in: path
@@ -150,6 +156,14 @@ components:
           type: array
           items: { $ref: "#/components/schemas/OperationsLogEntry" }
 
+    MergeQueueResolveRequest:
+      type: object
+      description: Optional body; default action is retry_merge (re-run forge/local merge).
+      properties:
+        action:
+          type: string
+          enum: [retry_merge, skip_ship]
+
     Product:
       type: object
       properties:
@@ -173,6 +187,19 @@ components:
         preference_model_json:
           type: string
           description: JSON array of swipe events (stub for preference learning)
+        merge_policy_json: { type: string }
+        merge_policy:
+          type: object
+          description: Effective merge policy (automation tier + merge_policy_json)
+          properties:
+            merge_method: { type: string }
+            merge_backend_override: { type: string }
+            require_approved_review: { type: boolean }
+            require_clean_mergeable: { type: boolean }
+        merge_queue_pending:
+          type: integer
+          format: int64
+          description: Present when merge queue is wired
         last_auto_research_at:
           type: string
           format: date-time
@@ -885,6 +912,53 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+
+  /api/tasks/{id}/merge-queue/resolve:
+    post:
+      tags: [Tasks]
+      summary: Resolve merge-queue head after conflict (retry merge or skip ship)
+      description: Same semantics as POST .../merge-queue/complete; optional JSON body selects skip_ship vs retry_merge (default).
+      parameters:
+        - $ref: "#/components/parameters/taskId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeQueueResolveRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: resolved } } }
+        "503":
+          description: Merge ship not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/merge-queue/{id}/resolve:
+    post:
+      tags: [Tasks]
+      summary: Resolve merge-queue row by row id
+      parameters:
+        - $ref: "#/components/parameters/mergeQueueRowId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeQueueResolveRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: resolved } } }
+        "503":
+          description: Merge queue or ship not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/convoys:
     post:

@@ -208,3 +208,50 @@ func TestWorkspaceMergeQueueCancelHeadBlockedByLease(t *testing.T) {
 		t.Fatalf("got %v want ErrMergeShipBusy", err)
 	}
 }
+
+func TestWorkspaceGetPendingMergeQueueEntry(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	ps := NewProductStore(db)
+	is := NewIdeaStore(db)
+	ts := NewTaskStore(db)
+	ws := NewWorkspaceStore(db)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	p := &domain.Product{
+		ID: domain.ProductID("prod-gmq"), Name: "n", Stage: domain.StageResearch,
+		WorkspaceID: "ws", UpdatedAt: now,
+	}
+	_ = ps.Save(ctx, p)
+	idea := &domain.Idea{
+		ID: domain.IdeaID("idea-g"), ProductID: p.ID, Title: "t", Description: "d",
+		Impact: 0.5, Feasibility: 0.5, Reasoning: "r", Decided: true, Decision: domain.DecisionYes, CreatedAt: now,
+	}
+	_ = is.Save(ctx, idea)
+	task := &domain.Task{
+		ID: "t-gmq", ProductID: p.ID, IdeaID: idea.ID, Spec: "s",
+		Status: domain.StatusInProgress, PlanApproved: true, CreatedAt: now, UpdatedAt: now,
+	}
+	_ = ts.Save(ctx, task)
+	if err := ws.Enqueue(ctx, p.ID, task.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	list, err := ws.ListPendingByProduct(ctx, p.ID, 10)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list: %v %#v", err, list)
+	}
+	rowID := list[0].ID
+	got, err := ws.GetPendingMergeQueueEntry(ctx, rowID)
+	if err != nil || got == nil || got.TaskID != task.ID {
+		t.Fatalf("get pending: err=%v got=%#v", err, got)
+	}
+	if _, err := ws.GetPendingMergeQueueEntry(ctx, 99999); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("want ErrNotFound got %v", err)
+	}
+}

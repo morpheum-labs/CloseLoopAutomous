@@ -182,6 +182,10 @@ func buildHandlers(
 	}
 
 	prMerger := shipping.NewPullRequestMergerFromConfig(cfg.GitHubToken, cfg.GitHubAPIURL)
+	var gateChecker ports.PullRequestMergeGateChecker
+	if g, ok := prMerger.(ports.PullRequestMergeGateChecker); ok {
+		gateChecker = g
+	}
 	var wtMerger ports.WorktreeMerger
 	if strings.EqualFold(strings.TrimSpace(cfg.MergeBackend), "local") {
 		wtMerger = shipping.NewLocalGitMerger()
@@ -192,7 +196,7 @@ func buildHandlers(
 		LeaseOwner:  cfg.MergeLeaseOwner,
 		LeaseTTLSec: cfg.MergeLeaseSec,
 		GitBin:      cfg.GitBin,
-	}, mergeQueue, tasks, products, prMerger, wtMerger, taskEvents, clock)
+	}, mergeQueue, tasks, products, prMerger, gateChecker, wtMerger, taskEvents, clock)
 	if mergeShip != nil {
 		taskSvc.MergeShip = mergeShip
 	}

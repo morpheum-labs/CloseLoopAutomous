@@ -26,7 +26,59 @@ func NewGitHubPRMerger(token, apiBaseURL string) (*GitHubPRMerger, error) {
 	return &GitHubPRMerger{client: p.client}, nil
 }
 
-var _ ports.PullRequestMerger = (*GitHubPRMerger)(nil)
+var (
+	_ ports.PullRequestMerger          = (*GitHubPRMerger)(nil)
+	_ ports.PullRequestMergeGateChecker = (*GitHubPRMerger)(nil)
+)
+
+// CheckMergeGates enforces review + GitHub mergeable_state before unattended merge.
+func (g *GitHubPRMerger) CheckMergeGates(ctx context.Context, owner, repo string, prNumber int, gates domain.MergeExecutionGates) error {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" || prNumber <= 0 {
+		return fmt.Errorf("%w: merge gate input", domain.ErrInvalidInput)
+	}
+	pr, _, err := g.client.PullRequests.Get(ctx, owner, repo, prNumber)
+	if err != nil {
+		return fmt.Errorf("%w: %v", domain.ErrShipping, err)
+	}
+	if pr.GetMerged() {
+		return fmt.Errorf("%w: pull request already merged", domain.ErrInvalidInput)
+	}
+	if gates.RequireCleanMergeable {
+		if pr.Mergeable != nil && !*pr.Mergeable {
+			return domain.ErrMergeGatesNotMet
+		}
+		ms := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
+		if ms != "clean" {
+			return domain.ErrMergeGatesNotMet
+		}
+	}
+	if gates.RequireApprovedReview {
+		reviews, _, err := g.client.PullRequests.ListReviews(ctx, owner, repo, prNumber, nil)
+		if err != nil {
+			return fmt.Errorf("%w: list reviews: %v", domain.ErrShipping, err)
+		}
+		latest := make(map[int64]string)
+		for _, rv := range reviews {
+			if rv == nil || rv.User == nil {
+				continue
+			}
+			latest[rv.User.GetID()] = strings.TrimSpace(rv.GetState())
+		}
+		ok := false
+		for _, st := range latest {
+			if strings.EqualFold(st, "APPROVED") {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return domain.ErrMergeGatesNotMet
+		}
+	}
+	return nil
+}
 
 // MergePullRequest merges an open PR using merge|squash|rebase.
 func (g *GitHubPRMerger) MergePullRequest(ctx context.Context, owner, repo string, prNumber int, mergeMethod string) (domain.MergeShipResult, error) {

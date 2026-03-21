@@ -44,6 +44,8 @@ func routeCatalog() []RouteEntry {
 		{"POST", "/api/tasks/{id}/merge-queue", "Enqueue task for serialized merge (409 if already pending); operations_log merge_queue.enqueue"},
 		{"DELETE", "/api/tasks/{id}/merge-queue", "Remove pending row for task (non-head always; head only when no active merge lease); 503 merge_lease_busy if ship in flight; operations_log merge_queue.cancel"},
 		{"POST", "/api/tasks/{id}/merge-queue/complete", "Complete merge queue head; optional ?skip_ship=1 skips forge/git merge; with ARMS_MERGE_BACKEND=github|local runs real merge (409 merge_conflict, 503 merge_lease_busy); operations_log merge_queue.complete"},
+		{"POST", "/api/tasks/{id}/merge-queue/resolve", "After conflict: body {action: retry_merge|skip_ship} (default retry_merge); same ship semantics as merge-queue/complete; operations_log merge_queue.resolve"},
+		{"POST", "/api/merge-queue/{id}/resolve", "Same as task resolve but {id} is workspace_merge_queue row id from GET .../merge-queue; operations_log merge_queue.resolve"},
 		{"POST", "/api/tasks/{id}/workspace/git-worktree", "Optional git worktree add (ARMS_ENABLE_GIT_WORKTREES=1, ARMS_WORKSPACE_ROOT, product.repo_clone_path); body {branch}"},
 		{"GET", "/api/tasks/{id}/agent-health", "Agent heartbeat row for task (unknown if never reported)"},
 		{"PATCH", "/api/tasks/{id}/agent-health", "Record heartbeat {status, detail?}"},

@@ -29,6 +29,38 @@ type MergePolicy struct {
 	MergeMethod string `json:"merge_method"` // merge | squash | rebase (default merge)
 	// MergeBackendOverride: when set, overrides process ARMS_MERGE_BACKEND for this product (github|local|noop).
 	MergeBackendOverride string `json:"merge_backend,omitempty"`
+	// RequireApprovedReview, when non-nil, overrides the default implied by [AutomationTier] for auto merge-queue ship.
+	RequireApprovedReview *bool `json:"require_approved_review,omitempty"`
+	// RequireCleanMergeable, when non-nil, overrides the default (GitHub mergeable_state must be "clean").
+	RequireCleanMergeable *bool `json:"require_clean_mergeable,omitempty"`
+}
+
+// MergeExecutionGates controls unattended merge-queue completion (semi_auto / policy), not manual POST .../complete.
+type MergeExecutionGates struct {
+	RequireApprovedReview bool
+	RequireCleanMergeable bool
+}
+
+// EffectiveMergeExecutionGates combines automation tier defaults with merge_policy_json overrides.
+func EffectiveMergeExecutionGates(p *Product, pol MergePolicy) MergeExecutionGates {
+	var defRev, defClean bool
+	switch p.AutomationTier {
+	case TierFullAuto:
+		defRev, defClean = false, false
+	case TierSemiAuto:
+		defRev, defClean = true, true
+	default:
+		defRev, defClean = true, true
+	}
+	rev := defRev
+	if pol.RequireApprovedReview != nil {
+		rev = *pol.RequireApprovedReview
+	}
+	clean := defClean
+	if pol.RequireCleanMergeable != nil {
+		clean = *pol.RequireCleanMergeable
+	}
+	return MergeExecutionGates{RequireApprovedReview: rev, RequireCleanMergeable: clean}
 }
 
 // ParseMergePolicy unmarshals product.MergePolicyJSON; invalid JSON yields defaults.
@@ -45,6 +77,7 @@ func ParseMergePolicy(jsonStr string) MergePolicy {
 		p.MergeMethod = "merge"
 	}
 	p.MergeMethod = strings.ToLower(strings.TrimSpace(p.MergeMethod))
+	p.MergeBackendOverride = strings.ToLower(strings.TrimSpace(p.MergeBackendOverride))
 	return p
 }
 

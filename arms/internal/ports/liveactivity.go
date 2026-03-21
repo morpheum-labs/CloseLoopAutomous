@@ -47,3 +47,8 @@ type LiveActivityTX interface {
 	// Idempotent when the task is already done (still upserts health + outbox).
 	CompleteTaskWithEvent(ctx context.Context, taskID domain.TaskID, at time.Time, healthStatus, healthDetailJSON string, ev LiveActivityEvent) error
 }
+
+// MergeShipOutboxFinisher writes merge-queue ship outcome and one outbox row in a single DB transaction (SQLite).
+type MergeShipOutboxFinisher interface {
+	FinishShipWithOutbox(ctx context.Context, rowID int64, leaseOwner string, result domain.MergeShipResult, shipOpErr error, ev LiveActivityEvent) error
+}

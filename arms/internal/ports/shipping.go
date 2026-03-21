@@ -33,3 +33,8 @@ type PullRequestPublisher interface {
 type PullRequestMerger interface {
 	MergePullRequest(ctx context.Context, owner, repo string, prNumber int, mergeMethod string) (domain.MergeShipResult, error)
 }
+
+// PullRequestMergeGateChecker inspects GitHub PR state before unattended merge (reviews, mergeable_state).
+type PullRequestMergeGateChecker interface {
+	CheckMergeGates(ctx context.Context, owner, repo string, prNumber int, gates domain.MergeExecutionGates) error
+}

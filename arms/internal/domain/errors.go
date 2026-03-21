@@ -16,4 +16,5 @@ var (
 	ErrMergeConflict      = errors.New("merge conflict")
 	ErrMergeShipBusy      = errors.New("merge queue lease held by another worker")
 	ErrNotConfigured      = errors.New("not configured")
+	ErrMergeGatesNotMet   = errors.New("merge gates not satisfied")
 )
