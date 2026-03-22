@@ -5,8 +5,10 @@ import { WorkspaceDashboardView } from './components/dashboard/WorkspaceDashboar
 import { ActivityLogPage } from './routes/ActivityLogPage';
 import { AutopilotPlaceholderPage } from './routes/AutopilotPlaceholderPage';
 import { MissionAgentsPage } from './routes/MissionAgentsPage';
+import { MissionDocsPage } from './routes/MissionDocsPage';
 import { MissionFeedPage } from './routes/MissionFeedPage';
 import { MissionProjectsPage } from './routes/MissionProjectsPage';
+import { MissionTeamPage } from './routes/MissionTeamPage';
 import { MissionTasksPage } from './routes/MissionTasksPage';
 import { NotFoundPage } from './routes/NotFoundPage';
 import { ProductWorkspaceOutlet } from './routes/ProductWorkspaceOutlet';
@@ -30,10 +32,10 @@ export default function App() {
               <Route path="calendar" element={<WorkspaceModulePlaceholder segment="calendar" />} />
               <Route path="projects" element={<MissionProjectsPage />} />
               <Route path="memory" element={<WorkspaceModulePlaceholder segment="memory" />} />
-              <Route path="docs" element={<WorkspaceModulePlaceholder segment="docs" />} />
+              <Route path="docs" element={<MissionDocsPage />} />
               <Route path="people" element={<WorkspaceModulePlaceholder segment="people" />} />
               <Route path="office" element={<WorkspaceModulePlaceholder segment="office" />} />
-              <Route path="team" element={<WorkspaceModulePlaceholder segment="team" />} />
+              <Route path="team" element={<MissionTeamPage />} />
               <Route path="system" element={<WorkspaceModulePlaceholder segment="system" />} />
               <Route path="radar" element={<WorkspaceModulePlaceholder segment="radar" />} />
               <Route path="factory" element={<WorkspaceModulePlaceholder segment="factory" />} />

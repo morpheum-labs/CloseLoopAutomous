@@ -1,6 +1,7 @@
 import type { ArmsEnv } from '../config/armsEnv';
 import type {
   ApiAgentHealthItem,
+  ApiKnowledgeEntry,
   ApiOperationLogEntry,
   ApiProduct,
   ApiProductDetail,
@@ -159,6 +160,61 @@ export class ArmsClient {
 
   async createProduct(body: CreateProductBody): Promise<ApiProduct> {
     return this.postJson<ApiProduct>('/api/products', body);
+  }
+
+  async listProductKnowledge(
+    productId: string,
+    opts?: { limit?: number; q?: string },
+  ): Promise<ApiKnowledgeEntry[]> {
+    const sp = new URLSearchParams();
+    if (opts?.limit != null) sp.set('limit', String(opts.limit));
+    if (opts?.q?.trim()) sp.set('q', opts.q.trim());
+    const qs = sp.toString();
+    const path = qs
+      ? `/api/products/${encodeURIComponent(productId)}/knowledge?${qs}`
+      : `/api/products/${encodeURIComponent(productId)}/knowledge`;
+    const res = await this.raw('GET', path);
+    if (res.status === 503) {
+      const err = await readErrorBody(res);
+      throw new ArmsHttpError(err.message, res.status, err.code);
+    }
+    if (!res.ok) {
+      const err = await readErrorBody(res);
+      throw new ArmsHttpError(err.message, res.status, err.code);
+    }
+    const body = (await res.json()) as { entries?: ApiKnowledgeEntry[] };
+    return body.entries ?? [];
+  }
+
+  async createProductKnowledge(
+    productId: string,
+    body: { content: string; task_id?: string; metadata?: Record<string, unknown> },
+  ): Promise<ApiKnowledgeEntry> {
+    return this.postJson<ApiKnowledgeEntry>(
+      `/api/products/${encodeURIComponent(productId)}/knowledge`,
+      body,
+    );
+  }
+
+  async patchProductKnowledgeEntry(
+    productId: string,
+    entryId: number,
+    body: { content?: string; metadata?: Record<string, unknown> },
+  ): Promise<ApiKnowledgeEntry> {
+    return this.patchJson<ApiKnowledgeEntry>(
+      `/api/products/${encodeURIComponent(productId)}/knowledge/${encodeURIComponent(String(entryId))}`,
+      body,
+    );
+  }
+
+  async deleteProductKnowledgeEntry(productId: string, entryId: number): Promise<void> {
+    const res = await this.raw(
+      'DELETE',
+      `/api/products/${encodeURIComponent(productId)}/knowledge/${encodeURIComponent(String(entryId))}`,
+    );
+    if (res.status === 204) return;
+    const err = await readErrorBody(res);
+    throw new ArmsHttpError(err.message, res.status, err.code);
   }
 
   private headers(): HeadersInit {

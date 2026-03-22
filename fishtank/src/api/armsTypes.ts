@@ -80,3 +80,14 @@ export type ApiOperationLogEntry = {
   product_id?: string;
   created_at?: string;
 };
+
+/** Product knowledge entry — `GET/POST/PATCH …/products/{id}/knowledge`. */
+export type ApiKnowledgeEntry = {
+  id: number;
+  product_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  task_id?: string;
+  metadata: Record<string, unknown>;
+};

@@ -32,11 +32,6 @@ const COPY: Record<string, { title: string; blurb: string; designRef: string }> 
     blurb: 'Long-term journal — aggregate chat, knowledge, and ops log when backends unify.',
     designRef: '§2 Memories',
   },
-  docs: {
-    title: 'Docs',
-    blurb: 'Searchable artifacts — wire knowledge CRUD and previews ([G]).',
-    designRef: '§2 Docs',
-  },
   people: {
     title: 'People',
     blurb: 'Human operators and roles — optional; most agent roster lives under Agents / Team.',
