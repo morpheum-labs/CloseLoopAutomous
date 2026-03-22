@@ -23,6 +23,11 @@ func TestWebhookAgentCompletion(t *testing.T) {
 	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0)
+	if err := app.Products.Save(ctx, &domain.Product{
+		ID: "prod-1", Name: "p", Stage: domain.StageResearch, WorkspaceID: "w", UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	err := app.Tasks.Save(ctx, &domain.Task{
 		ID:           "task-1",
 		ProductID:    "prod-1",

@@ -31,4 +31,7 @@ type Product struct {
 	PreferenceModelJSON string
 	// MergePolicyJSON optional per-product merge_method / backend override (see [ParseMergePolicy]).
 	MergePolicyJSON string
+
+	// DeletedAt is set when the product is soft-deleted; zero means active.
+	DeletedAt time.Time
 }

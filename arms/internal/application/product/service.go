@@ -162,9 +162,24 @@ func (s *Service) PatchMetadata(ctx context.Context, id domain.ProductID, patch 
 	if patch.AutoDispatchEnabled != nil {
 		p.AutoDispatchEnabled = *patch.AutoDispatchEnabled
 	}
+	prev := p.UpdatedAt
 	p.UpdatedAt = s.Clock.Now()
-	if err := s.Products.Save(ctx, p); err != nil {
+	if err := s.Products.SaveIfUnchangedSince(ctx, p, prev); err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+// SoftDelete is the tombstone use case: domain + ProductRepository define invariants; adapters persist.
+func (s *Service) SoftDelete(ctx context.Context, id domain.ProductID) error {
+	return s.Products.SoftDelete(ctx, id, s.Clock.Now())
+}
+
+// Restore clears soft-delete (repository + clock); returns the active aggregate via ByID.
+func (s *Service) Restore(ctx context.Context, id domain.ProductID) (*domain.Product, error) {
+	now := s.Clock.Now()
+	if err := s.Products.Restore(ctx, id, now); err != nil {
+		return nil, err
+	}
+	return s.Products.ByID(ctx, id)
 }

@@ -39,20 +39,20 @@ var gitBranchTokenRE = regexp.MustCompile(`^[a-zA-Z0-9/._-]+$`)
 
 // Handlers holds application services for the HTTP adapter.
 type Handlers struct {
-	Config    Config
-	Product   *productapp.Service
-	Autopilot *autopilot.Service
-	Feedback  *feedback.Service
-	Task      *task.Service
-	TaskChat  *taskchat.Service
-	Knowledge *knowledgeapp.Service
-	Convoy    *convoy.Service
-	Agent     *agentapp.Service
+	Config         Config
+	Product        *productapp.Service
+	Autopilot      *autopilot.Service
+	Feedback       *feedback.Service
+	Task           *task.Service
+	TaskChat       *taskchat.Service
+	Knowledge      *knowledgeapp.Service
+	Convoy         *convoy.Service
+	Agent          *agentapp.Service
 	Cost           *cost.Service
 	Live           ports.ActivityStream // SSE subscribers; required for live routes
 	WorkspacePorts ports.WorkspacePortRepository
 	MergeQueue     ports.WorkspaceMergeQueueRepository
-	MergeShip      *mergequeue.Service // optional; real merge ship when ARMS_MERGE_* set
+	MergeShip      *mergequeue.Service         // optional; real merge ship when ARMS_MERGE_* set
 	AgentHealth    ports.AgentHealthRepository // optional; nil keeps legacy agent listing stub
 	PrefModel      ports.PreferenceModelRepository
 	OperationsLog  ports.OperationsLogRepository
@@ -63,6 +63,8 @@ type Handlers struct {
 	// BuildVersion / BuildCommit are set from cmd/arms linker flags (see platform.Build).
 	BuildVersion string
 	BuildCommit  string
+	// ExpectedSchemaVersion is the embedded SQLite migration ceiling (see sqlite.ExpectedSchemaVersion).
+	ExpectedSchemaVersion int
 }
 
 func (h *Handlers) maybeReconcileAutopilotSchedule(ctx context.Context) {
@@ -98,20 +100,20 @@ func (h *Handlers) createProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, err := h.Product.Register(r.Context(), productapp.RegistrationInput{
-		Name:                 req.Name,
-		WorkspaceID:          req.WorkspaceID,
-		RepoURL:              req.RepoURL,
-		RepoClonePath:        strings.TrimSpace(req.RepoClonePath),
-		RepoBranch:           req.RepoBranch,
-		Description:          req.Description,
-		ProgramDocument:      req.ProgramDocument,
-		SettingsJSON:         req.SettingsJSON,
-		IconURL:              req.IconURL,
-		ResearchCadenceSec:   req.ResearchCadenceSec,
-		IdeationCadenceSec:   req.IdeationCadenceSec,
-		AutomationTier:       req.AutomationTier,
-		AutoDispatchEnabled:  req.AutoDispatchEnabled,
-		MergePolicyJSON:      strings.TrimSpace(req.MergePolicyJSON),
+		Name:                req.Name,
+		WorkspaceID:         req.WorkspaceID,
+		RepoURL:             req.RepoURL,
+		RepoClonePath:       strings.TrimSpace(req.RepoClonePath),
+		RepoBranch:          req.RepoBranch,
+		Description:         req.Description,
+		ProgramDocument:     req.ProgramDocument,
+		SettingsJSON:        req.SettingsJSON,
+		IconURL:             req.IconURL,
+		ResearchCadenceSec:  req.ResearchCadenceSec,
+		IdeationCadenceSec:  req.IdeationCadenceSec,
+		AutomationTier:      req.AutomationTier,
+		AutoDispatchEnabled: req.AutoDispatchEnabled,
+		MergePolicyJSON:     strings.TrimSpace(req.MergePolicyJSON),
 	})
 	if err != nil {
 		if mapDomainErr(w, err) {
@@ -127,7 +129,17 @@ func (h *Handlers) createProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) listProducts(w http.ResponseWriter, r *http.Request) {
-	list, err := h.Autopilot.Products.ListAll(r.Context())
+	ctx := r.Context()
+	includeDeleted := queryTruthy(r.URL.Query().Get("include_deleted"))
+	var (
+		list []domain.Product
+		err  error
+	)
+	if includeDeleted {
+		list, err = h.Autopilot.Products.ListAllIncludingDeleted(ctx)
+	} else {
+		list, err = h.Autopilot.Products.ListAll(ctx)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -151,19 +163,19 @@ func (h *Handlers) patchProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	id := domain.ProductID(r.PathValue("id"))
 	patch := productapp.MetadataPatch{
-		Name:                 req.Name,
-		RepoURL:              req.RepoURL,
-		RepoClonePath:        req.RepoClonePath,
-		RepoBranch:           req.RepoBranch,
-		Description:          req.Description,
-		ProgramDocument:      req.ProgramDocument,
-		SettingsJSON:         req.SettingsJSON,
-		IconURL:              req.IconURL,
-		MergePolicyJSON:      req.MergePolicyJSON,
-		ResearchCadenceSec:   req.ResearchCadenceSec,
-		IdeationCadenceSec:   req.IdeationCadenceSec,
-		AutomationTier:       req.AutomationTier,
-		AutoDispatchEnabled:  req.AutoDispatchEnabled,
+		Name:                req.Name,
+		RepoURL:             req.RepoURL,
+		RepoClonePath:       req.RepoClonePath,
+		RepoBranch:          req.RepoBranch,
+		Description:         req.Description,
+		ProgramDocument:     req.ProgramDocument,
+		SettingsJSON:        req.SettingsJSON,
+		IconURL:             req.IconURL,
+		MergePolicyJSON:     req.MergePolicyJSON,
+		ResearchCadenceSec:  req.ResearchCadenceSec,
+		IdeationCadenceSec:  req.IdeationCadenceSec,
+		AutomationTier:      req.AutomationTier,
+		AutoDispatchEnabled: req.AutoDispatchEnabled,
 	}
 	p, err := h.Product.PatchMetadata(r.Context(), id, patch)
 	if err != nil {
@@ -173,6 +185,33 @@ func (h *Handlers) patchProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, productToJSON(p))
+}
+
+func (h *Handlers) deleteProduct(w http.ResponseWriter, r *http.Request) {
+	id := domain.ProductID(r.PathValue("id"))
+	if err := h.Product.SoftDelete(r.Context(), id); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	h.logOperation(r.Context(), "http", "product.soft_delete", "product", string(id), `{}`, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) restoreProduct(w http.ResponseWriter, r *http.Request) {
+	id := domain.ProductID(r.PathValue("id"))
+	p, err := h.Product.Restore(r.Context(), id)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	h.logOperation(r.Context(), "http", "product.restore", "product", string(id), `{}`, id)
 	writeJSON(w, http.StatusOK, productToJSON(p))
 }
 
@@ -289,17 +328,21 @@ func (h *Handlers) swipe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := domain.IdeaID(r.PathValue("id"))
-	if err := h.Autopilot.SubmitSwipe(r.Context(), id, dec); err != nil {
+	ctx := r.Context()
+	if err := h.Autopilot.SubmitSwipe(ctx, id, dec); err != nil {
 		if mapDomainErr(w, err) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	idea, err := h.Autopilot.Ideas.ByID(r.Context(), id)
+	idea, err := h.Autopilot.Ideas.ByID(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	if h.Knowledge != nil {
+		_ = h.Knowledge.IngestFromSwipe(ctx, idea, dec)
 	}
 	writeJSON(w, http.StatusOK, ideaToJSON(idea))
 }
@@ -489,6 +532,9 @@ func (h *Handlers) postProductFeedback(w http.ResponseWriter, r *http.Request) {
 	if h.Autopilot != nil {
 		h.Autopilot.RefreshPreferenceModelBestEffort(ctx, pid)
 	}
+	if h.Knowledge != nil {
+		_ = h.Knowledge.IngestFromProductFeedback(ctx, f)
+	}
 	writeJSON(w, http.StatusCreated, feedbackToJSON(f))
 }
 
@@ -586,7 +632,7 @@ func (h *Handlers) createTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) getTask(w http.ResponseWriter, r *http.Request) {
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -653,7 +699,7 @@ func (h *Handlers) patchTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	t, err := h.Task.Tasks.ByID(ctx, id)
+	t, err := h.Task.TaskByIDForAPI(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -675,7 +721,7 @@ func (h *Handlers) approvePlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -697,7 +743,7 @@ func (h *Handlers) rejectPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -745,7 +791,7 @@ func (h *Handlers) dispatchTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -773,7 +819,7 @@ func (h *Handlers) checkpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -802,7 +848,7 @@ func (h *Handlers) nudgeStallTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -927,13 +973,13 @@ func (h *Handlers) ackProductChatQueue(w http.ResponseWriter, r *http.Request) {
 
 func taskChatMessageToJSON(m *domain.TaskChatMessage) map[string]any {
 	return map[string]any{
-		"id":             m.ID,
-		"product_id":     string(m.ProductID),
-		"task_id":        string(m.TaskID),
-		"author":         m.Author,
-		"body":           m.Body,
-		"queue_pending":  m.QueuePending,
-		"created_at":     m.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"id":            m.ID,
+		"product_id":    string(m.ProductID),
+		"task_id":       string(m.TaskID),
+		"author":        m.Author,
+		"body":          m.Body,
+		"queue_pending": m.QueuePending,
+		"created_at":    m.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
@@ -950,7 +996,7 @@ func (h *Handlers) completeTask(w http.ResponseWriter, r *http.Request) {
 	if !h.Task.UsesLiveActivityTX() {
 		h.recordAgentHealthCompletion(ctx, id, "api_task_complete")
 	}
-	t, err := h.Task.Tasks.ByID(ctx, id)
+	t, err := h.Task.TaskByIDForAPI(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -1009,6 +1055,19 @@ func (h *Handlers) getConvoy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, convoyToJSON(c))
+}
+
+func (h *Handlers) getConvoyGraph(w http.ResponseWriter, r *http.Request) {
+	id := domain.ConvoyID(r.PathValue("id"))
+	detail, err := h.Convoy.Graph(r.Context(), id)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (h *Handlers) dispatchConvoy(w http.ResponseWriter, r *http.Request) {
@@ -1224,11 +1283,11 @@ func (h *Handlers) getTaskAgentHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if row == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"task_id":             string(id),
-			"status":              "unknown",
-			"detail":              map[string]any{},
-			"last_heartbeat_at":   nil,
-			"heartbeat_stale":     false,
+			"task_id":           string(id),
+			"status":            "unknown",
+			"detail":            map[string]any{},
+			"last_heartbeat_at": nil,
+			"heartbeat_stale":   false,
 		})
 		return
 	}
@@ -1251,7 +1310,7 @@ func (h *Handlers) patchTaskAgentHealth(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx := r.Context()
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(ctx, id)
+	t, err := h.Task.TaskByIDForAPI(ctx, id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1411,7 +1470,7 @@ func (h *Handlers) prepareGitWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(ctx, id)
+	t, err := h.Task.TaskByIDForAPI(ctx, id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1459,7 +1518,7 @@ func (h *Handlers) recordAgentHealthCompletion(ctx context.Context, taskID domai
 	if h.AgentHealth == nil {
 		return
 	}
-	t, err := h.Task.Tasks.ByID(ctx, taskID)
+	t, err := h.Task.TaskByIDForAPI(ctx, taskID)
 	if err != nil {
 		return
 	}
@@ -1537,7 +1596,7 @@ func (h *Handlers) enqueueMergeQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1562,7 +1621,7 @@ func (h *Handlers) completeMergeQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1595,7 +1654,7 @@ func (h *Handlers) resolveMergeQueueByTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1775,7 +1834,7 @@ func (h *Handlers) cancelMergeQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := domain.TaskID(r.PathValue("id"))
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		if mapDomainErr(w, err) {
 			return
@@ -1923,7 +1982,7 @@ func (h *Handlers) restoreTaskCheckpoint(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	t, err := h.Task.Tasks.ByID(r.Context(), id)
+	t, err := h.Task.TaskByIDForAPI(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -1966,17 +2025,31 @@ func (h *Handlers) agentCompletionWebhook(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusServiceUnavailable, "not_configured", "convoy service not available")
 			return
 		}
-		if err := h.Convoy.CompleteSubtask(ctx, domain.ConvoyID(strings.TrimSpace(req.ConvoyID)), domain.SubtaskID(strings.TrimSpace(req.SubtaskID)), tid); err != nil {
+		cid := domain.ConvoyID(strings.TrimSpace(req.ConvoyID))
+		sid := domain.SubtaskID(strings.TrimSpace(req.SubtaskID))
+		if err := h.Convoy.CompleteSubtask(ctx, cid, sid, tid); err != nil {
 			if mapDomainErr(w, err) {
 				return
 			}
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
+		if h.Knowledge != nil && h.Convoy != nil {
+			parent, perr := h.Task.TaskByIDForAPI(ctx, tid)
+			conv, cerr := h.Convoy.Get(ctx, cid)
+			if perr == nil && cerr == nil && parent != nil && conv != nil {
+				for i := range conv.Subtasks {
+					if conv.Subtasks[i].ID == sid {
+						_ = h.Knowledge.IngestFromConvoySubtask(ctx, parent, cid, &conv.Subtasks[i])
+						break
+					}
+				}
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	if err := h.Task.ApplyAgentWebhookOutcome(ctx, tid, req.NextBoardStatus, "agent_completion_webhook"); err != nil {
+	if err := h.Task.ApplyAgentWebhookOutcome(ctx, tid, req.NextBoardStatus, "agent_completion_webhook", req.KnowledgeSummary); err != nil {
 		if mapDomainErr(w, err) {
 			return
 		}
@@ -1984,7 +2057,7 @@ func (h *Handlers) agentCompletionWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !h.Task.UsesLiveActivityTX() {
-		if t, e := h.Task.Tasks.ByID(ctx, tid); e == nil && t.Status == domain.StatusDone {
+		if t, e := h.Task.TaskByIDForAPI(ctx, tid); e == nil && t.Status == domain.StatusDone {
 			h.recordAgentHealthCompletion(ctx, tid, "agent_completion_webhook")
 		}
 	}
@@ -2017,7 +2090,7 @@ func (h *Handlers) ciCompletionWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	tid := domain.TaskID(req.TaskID)
-	if err := h.Task.ApplyCIWebhookOutcome(ctx, tid, req.NextBoardStatus, req.StatusReason, "ci_completion_webhook"); err != nil {
+	if err := h.Task.ApplyCIWebhookOutcome(ctx, tid, req.NextBoardStatus, req.StatusReason, "ci_completion_webhook", req.KnowledgeSummary); err != nil {
 		if mapDomainErr(w, err) {
 			return
 		}
@@ -2025,7 +2098,7 @@ func (h *Handlers) ciCompletionWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.Task.UsesLiveActivityTX() {
-		if t, e := h.Task.Tasks.ByID(ctx, tid); e == nil && t.Status == domain.StatusDone {
+		if t, e := h.Task.TaskByIDForAPI(ctx, tid); e == nil && t.Status == domain.StatusDone {
 			h.recordAgentHealthCompletion(ctx, tid, "ci_completion_webhook")
 		}
 	}
@@ -2117,15 +2190,19 @@ func parseTimeRangeQuery(r *http.Request) (from, to time.Time, err error) {
 	return from, to, nil
 }
 
+func queryTruthy(v string) bool {
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
 // JSON views
 
 func productToJSON(p *domain.Product) map[string]any {
 	pol := domain.ParseMergePolicy(p.MergePolicyJSON)
 	gates := domain.EffectiveMergeExecutionGates(p, pol)
 	polOut := map[string]any{
-		"merge_method":                 pol.MergeMethod,
-		"require_approved_review":      gates.RequireApprovedReview,
-		"require_clean_mergeable":      gates.RequireCleanMergeable,
+		"merge_method":            pol.MergeMethod,
+		"require_approved_review": gates.RequireApprovedReview,
+		"require_clean_mergeable": gates.RequireCleanMergeable,
 	}
 	if o := strings.TrimSpace(pol.MergeBackendOverride); o != "" {
 		polOut["merge_backend_override"] = o
@@ -2158,23 +2235,26 @@ func productToJSON(p *domain.Product) map[string]any {
 	if !p.LastAutoIdeationAt.IsZero() {
 		m["last_auto_ideation_at"] = p.LastAutoIdeationAt.Format(time.RFC3339Nano)
 	}
+	if p.IsDeleted() {
+		m["deleted_at"] = p.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
 	return m
 }
 
 func ideaToJSON(i *domain.Idea) map[string]any {
 	m := map[string]any{
-		"id":                   string(i.ID),
-		"product_id":           string(i.ProductID),
-		"title":                i.Title,
-		"description":          i.Description,
-		"impact":               i.Impact,
-		"feasibility":          i.Feasibility,
-		"impact_score":         i.ImpactScore,
-		"feasibility_score":    i.FeasibilityScore,
-		"reasoning":            i.Reasoning,
-		"research_backing":     i.ResearchBacking,
-		"category":             i.Category,
-		"complexity":           i.Complexity,
+		"id":                     string(i.ID),
+		"product_id":             string(i.ProductID),
+		"title":                  i.Title,
+		"description":            i.Description,
+		"impact":                 i.Impact,
+		"feasibility":            i.Feasibility,
+		"impact_score":           i.ImpactScore,
+		"feasibility_score":      i.FeasibilityScore,
+		"reasoning":              i.Reasoning,
+		"research_backing":       i.ResearchBacking,
+		"category":               i.Category,
+		"complexity":             i.Complexity,
 		"estimated_effort_hours": i.EstimatedEffortHours,
 		"competitive_analysis":   i.CompetitiveAnalysis,
 		"target_user_segment":    i.TargetUserSegment,
@@ -2188,7 +2268,7 @@ func ideaToJSON(i *domain.Idea) map[string]any {
 		"decided":                i.Decided,
 		"decision":               swipeString(i.Decision),
 		"user_notes":             i.UserNotes,
-		"created_at": i.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"created_at":             i.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if !i.UpdatedAt.IsZero() {
 		m["updated_at"] = i.UpdatedAt.UTC().Format(time.RFC3339Nano)
@@ -2403,13 +2483,13 @@ func (h *Handlers) listOperationsLog(w http.ResponseWriter, r *http.Request) {
 	for i := range list {
 		e := &list[i]
 		m := map[string]any{
-			"id":             e.ID,
-			"created_at":     e.CreatedAt.UTC().Format(time.RFC3339Nano),
-			"actor":          e.Actor,
-			"action":         e.Action,
-			"resource_type":  e.ResourceType,
-			"resource_id":    e.ResourceID,
-			"detail_json":    e.DetailJSON,
+			"id":            e.ID,
+			"created_at":    e.CreatedAt.UTC().Format(time.RFC3339Nano),
+			"actor":         e.Actor,
+			"action":        e.Action,
+			"resource_type": e.ResourceType,
+			"resource_id":   e.ResourceID,
+			"detail_json":   e.DetailJSON,
 		}
 		if e.ProductID != "" {
 			m["product_id"] = string(e.ProductID)
@@ -2430,12 +2510,12 @@ func (h *Handlers) getProductSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{
-		"product_id":      string(pid),
-		"enabled":         row.Enabled,
-		"spec_json":       row.SpecJSON,
-		"cron_expr":       row.CronExpr,
-		"delay_seconds":   row.DelaySeconds,
-		"asynq_task_id":   row.AsynqTaskID,
+		"product_id":    string(pid),
+		"enabled":       row.Enabled,
+		"spec_json":     row.SpecJSON,
+		"cron_expr":     row.CronExpr,
+		"delay_seconds": row.DelaySeconds,
+		"asynq_task_id": row.AsynqTaskID,
 	}
 	if row.LastEnqueuedAt != nil {
 		out["last_enqueued_at"] = row.LastEnqueuedAt.UTC().Format(time.RFC3339Nano)
@@ -2521,13 +2601,13 @@ func (h *Handlers) patchProductSchedule(w http.ResponseWriter, r *http.Request) 
 	h.maybeReconcileAutopilotSchedule(ctx)
 	h.maybeResyncProductSchedule(ctx, pid)
 	out := map[string]any{
-		"product_id":      string(pid),
-		"enabled":         row.Enabled,
-		"spec_json":       row.SpecJSON,
-		"cron_expr":       row.CronExpr,
-		"delay_seconds":   row.DelaySeconds,
-		"asynq_task_id":   row.AsynqTaskID,
-		"updated_at":      row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		"product_id":    string(pid),
+		"enabled":       row.Enabled,
+		"spec_json":     row.SpecJSON,
+		"cron_expr":     row.CronExpr,
+		"delay_seconds": row.DelaySeconds,
+		"asynq_task_id": row.AsynqTaskID,
+		"updated_at":    row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if row.LastEnqueuedAt != nil {
 		out["last_enqueued_at"] = row.LastEnqueuedAt.UTC().Format(time.RFC3339Nano)

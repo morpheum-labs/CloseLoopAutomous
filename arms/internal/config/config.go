@@ -42,6 +42,7 @@ import (
 //   - ARMS_AUTO_STALL_NUDGE_MAX_PER_DAY — max auto-nudges per task per rolling 24h (default 6); 0 disables the cap
 //   - ARMS_KNOWLEDGE_DISPATCH_SNIPPETS — max knowledge bullets appended per OpenClaw dispatch (default 5)
 //   - ARMS_KNOWLEDGE_DISABLE_DISPATCH — "1" or "true" to keep knowledge HTTP/CRUD but skip dispatch-time injection
+//   - ARMS_KNOWLEDGE_AUTO_INGEST — "0", "false", "off", "no" to disable auto-append to knowledge from swipes, product feedback, task/convoy completion (default on)
 //   - ARMS_KNOWLEDGE_BACKEND — fts5 (default, SQLite FTS5) or chromem (semantic search via chromem-go; requires embedder)
 //   - ARMS_CHROMEM_PERSISTENCE_PATH — directory for chromem persistent DB (default ./data/chromem-knowledge)
 //   - ARMS_CHROMEM_COMPRESS — "1" or "true" to gzip chromem document blobs on disk
@@ -58,46 +59,47 @@ import (
 //   - ARMS_MERGE_LEASE_OWNER — optional instance id for queue leases (default hostname)
 //   - ARMS_REDIS_ADDR — optional Redis (e.g. localhost:6379). When set, cmd/arms reconciles per-product arms:product_autopilot_tick on startup, every 5 minutes, and after product / product-schedule HTTP changes; cmd/arms-worker consumes the arms queue (product:schedule:tick, arms:product_autopilot_tick, arms:autopilot_tick for manual full TickScheduled sweeps). Without Redis, background autopilot is off (set Redis and run arms-worker).
 type Config struct {
-	ListenAddr                  string
-	MCAPIToken                  string
-	WebhookSecret               string
-	AllowLocalhost              bool
-	DatabasePath                string
-	DatabaseBackupBeforeMigrate bool
-	OpenClawGatewayURL          string
-	OpenClawGatewayToken        string
-	OpenClawDispatchTimeout     time.Duration
-	ArmsDeviceID                string
-	OpenClawSessionKey          string
-	LogJSON                     bool
-	AccessLog                   bool
-	AutopilotTickSec            int
-	BudgetDefaultCap            float64
-	GitHubToken                 string
-	GitHubAPIURL                string
-	GitHubPRBackend             string
-	GhPath                      string
-	GitHubHost                  string
-	EnableGitWorktrees          bool
-	GitBin                      string
-	WorkspaceRoot               string
-	AgentStaleSec               int
-	CORSAllowOrigin             string
-	ACLUsers                    []ACLUser
-	MergeBackend                string
-	MergeMethod                 string
-	MergeLeaseSec               int
-	MergeLeaseOwner             string
-	RedisAddr                   string
-	UseAsynqScheduler           bool
-	AutoStallNudgeEnabled       bool
-	AutoStallNudgeIntervalSec   int
-	AutoStallNudgeCooldownSec   int
-	AutoStallNudgeMaxPerDay     int
+	ListenAddr                        string
+	MCAPIToken                        string
+	WebhookSecret                     string
+	AllowLocalhost                    bool
+	DatabasePath                      string
+	DatabaseBackupBeforeMigrate       bool
+	OpenClawGatewayURL                string
+	OpenClawGatewayToken              string
+	OpenClawDispatchTimeout           time.Duration
+	ArmsDeviceID                      string
+	OpenClawSessionKey                string
+	LogJSON                           bool
+	AccessLog                         bool
+	AutopilotTickSec                  int
+	BudgetDefaultCap                  float64
+	GitHubToken                       string
+	GitHubAPIURL                      string
+	GitHubPRBackend                   string
+	GhPath                            string
+	GitHubHost                        string
+	EnableGitWorktrees                bool
+	GitBin                            string
+	WorkspaceRoot                     string
+	AgentStaleSec                     int
+	CORSAllowOrigin                   string
+	ACLUsers                          []ACLUser
+	MergeBackend                      string
+	MergeMethod                       string
+	MergeLeaseSec                     int
+	MergeLeaseOwner                   string
+	RedisAddr                         string
+	UseAsynqScheduler                 bool
+	AutoStallNudgeEnabled             bool
+	AutoStallNudgeIntervalSec         int
+	AutoStallNudgeCooldownSec         int
+	AutoStallNudgeMaxPerDay           int
 	KnowledgeDispatchSnippetLimit     int
 	KnowledgeDisableDispatchInjection bool
+	KnowledgeAutoIngest               bool
 	KnowledgeBackend                  string
-	ChromemPersistencePath          string
+	ChromemPersistencePath            string
 	ChromemCompress                   bool
 	ChromemEmbedder                   string
 	ChromemEmbedderModel              string
@@ -215,6 +217,11 @@ func LoadFromEnv() Config {
 	}
 	knowDisableInject := strings.EqualFold(os.Getenv("ARMS_KNOWLEDGE_DISABLE_DISPATCH"), "1") ||
 		strings.EqualFold(os.Getenv("ARMS_KNOWLEDGE_DISABLE_DISPATCH"), "true")
+	knowAutoIngest := true
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARMS_KNOWLEDGE_AUTO_INGEST"))) {
+	case "0", "false", "off", "no":
+		knowAutoIngest = false
+	}
 	knowBackend := strings.ToLower(strings.TrimSpace(os.Getenv("ARMS_KNOWLEDGE_BACKEND")))
 	if knowBackend == "" {
 		knowBackend = "fts5"
@@ -234,44 +241,45 @@ func LoadFromEnv() Config {
 	chromemOpenAIKey := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_OPENAI_API_KEY"))
 	chromemOpenAIModel := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_OPENAI_MODEL"))
 	return Config{
-		ListenAddr:                  addr,
-		MCAPIToken:                  strings.TrimSpace(token),
-		WebhookSecret:               strings.TrimSpace(secret),
-		AllowLocalhost:              allow,
-		DatabasePath:                dbPath,
-		DatabaseBackupBeforeMigrate: backup,
-		OpenClawGatewayURL:          ocURL,
-		OpenClawGatewayToken:        ocTok,
-		OpenClawDispatchTimeout:     dt,
-		ArmsDeviceID:                device,
-		OpenClawSessionKey:          sessionKey,
-		LogJSON:                     logJSON,
-		AccessLog:                   accessLog,
-		AutopilotTickSec:            autopilotTick,
-		BudgetDefaultCap:            budgetCap,
-		GitHubToken:                 ghTok,
-		GitHubAPIURL:                ghAPI,
-		GitHubPRBackend:             ghBackend,
-		GhPath:                      ghBin,
-		GitHubHost:                  ghHost,
-		EnableGitWorktrees:          gitWorktrees,
-		GitBin:                      gitExe,
-		WorkspaceRoot:               wsRoot,
-		AgentStaleSec:               agentStale,
-		CORSAllowOrigin:             corsOrigin,
-		ACLUsers:                    acl,
-		MergeBackend:                mergeBackend,
-		MergeMethod:                 mergeMethod,
-		MergeLeaseSec:               mergeLease,
-		MergeLeaseOwner:             mergeOwner,
-		RedisAddr:                   redisAddr,
-		UseAsynqScheduler:           useAsynqSched,
-		AutoStallNudgeEnabled:       autoStallNudge,
-		AutoStallNudgeIntervalSec:   autoStallInterval,
-		AutoStallNudgeCooldownSec:   autoStallCooldown,
-		AutoStallNudgeMaxPerDay:     autoStallMaxDay,
+		ListenAddr:                        addr,
+		MCAPIToken:                        strings.TrimSpace(token),
+		WebhookSecret:                     strings.TrimSpace(secret),
+		AllowLocalhost:                    allow,
+		DatabasePath:                      dbPath,
+		DatabaseBackupBeforeMigrate:       backup,
+		OpenClawGatewayURL:                ocURL,
+		OpenClawGatewayToken:              ocTok,
+		OpenClawDispatchTimeout:           dt,
+		ArmsDeviceID:                      device,
+		OpenClawSessionKey:                sessionKey,
+		LogJSON:                           logJSON,
+		AccessLog:                         accessLog,
+		AutopilotTickSec:                  autopilotTick,
+		BudgetDefaultCap:                  budgetCap,
+		GitHubToken:                       ghTok,
+		GitHubAPIURL:                      ghAPI,
+		GitHubPRBackend:                   ghBackend,
+		GhPath:                            ghBin,
+		GitHubHost:                        ghHost,
+		EnableGitWorktrees:                gitWorktrees,
+		GitBin:                            gitExe,
+		WorkspaceRoot:                     wsRoot,
+		AgentStaleSec:                     agentStale,
+		CORSAllowOrigin:                   corsOrigin,
+		ACLUsers:                          acl,
+		MergeBackend:                      mergeBackend,
+		MergeMethod:                       mergeMethod,
+		MergeLeaseSec:                     mergeLease,
+		MergeLeaseOwner:                   mergeOwner,
+		RedisAddr:                         redisAddr,
+		UseAsynqScheduler:                 useAsynqSched,
+		AutoStallNudgeEnabled:             autoStallNudge,
+		AutoStallNudgeIntervalSec:         autoStallInterval,
+		AutoStallNudgeCooldownSec:         autoStallCooldown,
+		AutoStallNudgeMaxPerDay:           autoStallMaxDay,
 		KnowledgeDispatchSnippetLimit:     knowSnippets,
 		KnowledgeDisableDispatchInjection: knowDisableInject,
+		KnowledgeAutoIngest:               knowAutoIngest,
 		KnowledgeBackend:                  knowBackend,
 		ChromemPersistencePath:            chromemPath,
 		ChromemCompress:                   chromemCompress,

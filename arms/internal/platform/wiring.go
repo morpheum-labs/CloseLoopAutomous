@@ -9,6 +9,7 @@ import (
 	"github.com/closeloopautomous/arms/internal/domain"
 
 	"github.com/closeloopautomous/arms/internal/adapters/ai"
+	"github.com/closeloopautomous/arms/internal/adapters/sqlite"
 	"github.com/closeloopautomous/arms/internal/adapters/budget"
 	gw "github.com/closeloopautomous/arms/internal/adapters/gateway"
 	"github.com/closeloopautomous/arms/internal/adapters/httpapi"
@@ -87,7 +88,7 @@ func NewInMemoryApp(cfg config.Config, b Build) *App {
 	if strings.EqualFold(strings.TrimSpace(cfg.KnowledgeBackend), "chromem") {
 		slog.Default().Warn("ARMS_KNOWLEDGE_BACKEND=chromem is ignored when DATABASE_PATH is empty (in-memory mode); using in-memory knowledge store")
 	}
-	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, false, hub, hub, nil, b)
+	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, false, hub, hub, nil, sqlite.ExpectedSchemaVersion, b)
 	return &App{Handlers: h, Products: products, Ideas: ideas, Tasks: tasks, ProductSchedules: sched, db: nil, cleanup: cleanup}
 }
 
@@ -119,6 +120,7 @@ func buildHandlers(
 	hub *livefeed.Hub,
 	taskEvents ports.LiveActivityPublisher,
 	liveTX ports.LiveActivityTX,
+	expectedSchemaVersion int,
 	b Build,
 ) (*httpapi.Handlers, func()) {
 	clock := timeadapter.System{}
@@ -129,6 +131,7 @@ func buildHandlers(
 		Clock:                clock,
 		DispatchSnippetLimit: cfg.KnowledgeDispatchSnippetLimit,
 		UseFTSQuerySyntax:    knowledgeUseFTSQuerySyntax,
+		AutoIngest:           cfg.KnowledgeAutoIngest,
 	}
 	var knowHook func(context.Context, domain.ProductID, string) (string, error)
 	if !cfg.KnowledgeDisableDispatchInjection {
@@ -202,6 +205,9 @@ func buildHandlers(
 			Cooldown:       time.Duration(cfg.AutoStallNudgeCooldownSec) * time.Second,
 			MaxPerDay:      cfg.AutoStallNudgeMaxPerDay,
 		},
+		KnowledgeAutoIngest: func(ctx context.Context, t *domain.Task, source string, knowledgeSummary string) {
+			_ = knowSvc.IngestFromTaskCompletion(ctx, t, source, knowledgeSummary)
+		},
 	}
 	convoySvc := &convoy.Service{
 		Convoys:  convoys,
@@ -263,24 +269,25 @@ func buildHandlers(
 	}
 
 	return &httpapi.Handlers{
-		Config:         cfg,
-		Product:        productSvc,
-		Autopilot:      autoSvc,
-		Task:           taskSvc,
-		Convoy:         convoySvc,
-		Agent:          agentSvc,
-		Cost:           costSvc,
-		Feedback:       feedbackSvc,
-		TaskChat:       taskChatSvc,
-		Knowledge:      knowSvc,
-		Live:           hub,
-		WorkspacePorts: workspacePorts,
-		MergeQueue:     mergeQueue,
-		MergeShip:      mergeShip,
-		AgentHealth:    agentHealth,
-		PrefModel:      preferenceModels,
-		OperationsLog:  operationsLog,
-		BuildVersion:   buildVer,
-		BuildCommit:    strings.TrimSpace(b.Commit),
+		Config:                cfg,
+		Product:               productSvc,
+		Autopilot:             autoSvc,
+		Task:                  taskSvc,
+		Convoy:                convoySvc,
+		Agent:                 agentSvc,
+		Cost:                  costSvc,
+		Feedback:              feedbackSvc,
+		TaskChat:              taskChatSvc,
+		Knowledge:             knowSvc,
+		Live:                  hub,
+		WorkspacePorts:        workspacePorts,
+		MergeQueue:            mergeQueue,
+		MergeShip:             mergeShip,
+		AgentHealth:           agentHealth,
+		PrefModel:             preferenceModels,
+		OperationsLog:         operationsLog,
+		BuildVersion:          buildVer,
+		BuildCommit:           strings.TrimSpace(b.Commit),
+		ExpectedSchemaVersion: expectedSchemaVersion,
 	}, gwCleanup
 }

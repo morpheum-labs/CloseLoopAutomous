@@ -289,10 +289,10 @@ type subtaskDTO struct {
 }
 
 type createConvoyReq struct {
-	ParentTaskID   string       `json:"parent_task_id"`
-	ProductID      string       `json:"product_id"`
-	MetadataJSON   string       `json:"metadata_json,omitempty"`
-	Subtasks       []subtaskDTO `json:"subtasks"`
+	ParentTaskID string       `json:"parent_task_id"`
+	ProductID    string       `json:"product_id"`
+	MetadataJSON string       `json:"metadata_json,omitempty"`
+	Subtasks     []subtaskDTO `json:"subtasks"`
 }
 
 func (r *createConvoyReq) validate() error {
@@ -348,9 +348,9 @@ func (r *recordCostReq) validate() error {
 }
 
 type patchCostCapsReq struct {
-	DailyCap       *float64 `json:"daily_cap"`
-	MonthlyCap     *float64 `json:"monthly_cap"`
-	CumulativeCap  *float64 `json:"cumulative_cap"`
+	DailyCap      *float64 `json:"daily_cap"`
+	MonthlyCap    *float64 `json:"monthly_cap"`
+	CumulativeCap *float64 `json:"cumulative_cap"`
 }
 
 func (r *patchCostCapsReq) validate() error {
@@ -404,6 +404,7 @@ type agentCompletionReq struct {
 	ConvoyID         string `json:"convoy_id,omitempty"`
 	SubtaskID        string `json:"subtask_id,omitempty"`
 	NextBoardStatus  string `json:"next_board_status,omitempty"` // omit or "done" → complete task; "testing" | "review" → Kanban move for full_auto/semi_auto
+	KnowledgeSummary string `json:"knowledge_summary,omitempty"` // optional text stored as auto-ingested product knowledge when task completes
 }
 
 func (r *agentCompletionReq) validate() error {
@@ -419,9 +420,10 @@ func (r *agentCompletionReq) validate() error {
 }
 
 type ciCompletionReq struct {
-	TaskID          string `json:"task_id"`
-	NextBoardStatus string `json:"next_board_status"`
-	StatusReason    string `json:"status_reason,omitempty"`
+	TaskID           string `json:"task_id"`
+	NextBoardStatus  string `json:"next_board_status"`
+	StatusReason     string `json:"status_reason,omitempty"`
+	KnowledgeSummary string `json:"knowledge_summary,omitempty"` // when next_board_status is done, optional auto-ingest body
 }
 
 func (r *ciCompletionReq) validate() error {
@@ -474,10 +476,10 @@ func (r *putPreferenceModelReq) validate() error {
 }
 
 type patchProductScheduleReq struct {
-	Enabled       *bool   `json:"enabled,omitempty"`
-	SpecJSON      *string `json:"spec_json,omitempty"`
-	CronExpr      *string `json:"cron_expr,omitempty"`
-	DelaySeconds  *int    `json:"delay_seconds,omitempty"`
+	Enabled      *bool   `json:"enabled,omitempty"`
+	SpecJSON     *string `json:"spec_json,omitempty"`
+	CronExpr     *string `json:"cron_expr,omitempty"`
+	DelaySeconds *int    `json:"delay_seconds,omitempty"`
 }
 
 func (r *patchProductScheduleReq) validate() error {

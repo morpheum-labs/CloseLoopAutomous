@@ -31,6 +31,9 @@ func mapDomainErr(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, domain.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input", err.Error())
 		return true
+	case errors.Is(err, domain.ErrStaleEntity):
+		writeError(w, http.StatusConflict, "stale_entity", err.Error())
+		return true
 	case errors.Is(err, domain.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 		return true

@@ -13,21 +13,46 @@ import (
 
 // Service owns task lifecycle up to dispatch; execution is delegated to AgentGateway.
 type Service struct {
-	Tasks    ports.TaskRepository
-	Products ports.ProductRepository
-	Ideas    ports.IdeaRepository
-	Gateway      ports.AgentGateway
-	Budget       ports.BudgetPolicy
-	Checkpt      ports.CheckpointRepository
-	Clock        ports.Clock
-	IDs          ports.IdentityGenerator
-	Events       ports.LiveActivityPublisher // optional: live activity / outbox
-	LiveTX       ports.LiveActivityTX        // optional: SQLite same-transaction outbox with domain writes
-	Gate         *ProductGate               // optional: per-product mutex (e.g. completion)
-	Ship         ports.PullRequestPublisher // GitHub / noop
-	AgentHealth  ports.AgentHealthRepository // optional: stall nudge heartbeats
-	MergeShip    ports.MergeQueueShipper     // optional: auto merge-queue completion on task done (full_auto always; semi_auto when GitHub gates pass)
-	AutoStallNudge AutoStallNudgeSettings    // optional: periodic auto stall nudge (#83); zero value disables
+	Tasks          ports.TaskRepository
+	Products       ports.ProductRepository
+	Ideas          ports.IdeaRepository
+	Gateway        ports.AgentGateway
+	Budget         ports.BudgetPolicy
+	Checkpt        ports.CheckpointRepository
+	Clock          ports.Clock
+	IDs            ports.IdentityGenerator
+	Events         ports.LiveActivityPublisher // optional: live activity / outbox
+	LiveTX         ports.LiveActivityTX        // optional: SQLite same-transaction outbox with domain writes
+	Gate           *ProductGate                // optional: per-product mutex (e.g. completion)
+	Ship           ports.PullRequestPublisher  // GitHub / noop
+	AgentHealth    ports.AgentHealthRepository // optional: stall nudge heartbeats
+	MergeShip      ports.MergeQueueShipper     // optional: auto merge-queue completion on task done (full_auto always; semi_auto when GitHub gates pass)
+	AutoStallNudge AutoStallNudgeSettings      // optional: periodic auto stall nudge (#83); zero value disables
+	// KnowledgeAutoIngest optional (#90); after successful task completion, best-effort knowledge row (summary may be empty).
+	KnowledgeAutoIngest func(ctx context.Context, task *domain.Task, source string, knowledgeSummary string)
+}
+
+// taskAndActiveProduct loads the task and its product. The product must exist and not be soft-deleted.
+func (s *Service) taskAndActiveProduct(ctx context.Context, taskID domain.TaskID) (*domain.Task, *domain.Product, error) {
+	raw, err := s.Tasks.ByID(ctx, taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	p, err := s.Products.ByID(ctx, raw.ProductID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return raw, p, nil
+}
+
+func (s *Service) taskWithActiveProduct(ctx context.Context, taskID domain.TaskID) (*domain.Task, error) {
+	t, _, err := s.taskAndActiveProduct(ctx, taskID)
+	return t, err
+}
+
+// TaskByIDForAPI returns a task only when its product is active (soft-delete cascade for HTTP reads).
+func (s *Service) TaskByIDForAPI(ctx context.Context, id domain.TaskID) (*domain.Task, error) {
+	return s.taskWithActiveProduct(ctx, id)
 }
 
 // CreateFromApprovedIdea starts the Kanban in planning until ApprovePlan moves to inbox.
@@ -38,6 +63,9 @@ func (s *Service) CreateFromApprovedIdea(ctx context.Context, ideaID domain.Idea
 	}
 	if !idea.Decided || !idea.Decision.Approved() {
 		return nil, fmt.Errorf("%w: idea not approved", domain.ErrInvalidTransition)
+	}
+	if err := ports.RequireActiveProduct(ctx, s.Products, idea.ProductID); err != nil {
+		return nil, err
 	}
 	now := s.Clock.Now()
 	t := &domain.Task{
@@ -72,7 +100,7 @@ func (s *Service) ListByProduct(ctx context.Context, productID domain.ProductID)
 
 // ApprovePlan clears the planning gate and moves the task to inbox (MC-style).
 func (s *Service) ApprovePlan(ctx context.Context, taskID domain.TaskID, spec string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -91,7 +119,7 @@ func (s *Service) ApprovePlan(ctx context.Context, taskID domain.TaskID, spec st
 
 // ReturnToPlanning revokes plan approval and moves the task back to planning from inbox or assigned (before dispatch).
 func (s *Service) ReturnToPlanning(ctx context.Context, taskID domain.TaskID, statusReason string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -126,7 +154,7 @@ func (s *Service) ReturnToPlanning(ctx context.Context, taskID domain.TaskID, st
 
 // SetKanbanStatus moves the task on the board when AllowedKanbanTransition permits it.
 func (s *Service) SetKanbanStatus(ctx context.Context, taskID domain.TaskID, to domain.TaskStatus, statusReason string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -156,7 +184,7 @@ func (s *Service) maybeAutoMergeShip(ctx context.Context, taskID domain.TaskID) 
 	if s.MergeShip == nil {
 		return
 	}
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil || t.Status != domain.StatusDone {
 		return
 	}
@@ -199,16 +227,13 @@ func (s *Service) tryAutoOpenPRIfApplicable(ctx context.Context, taskID domain.T
 }
 
 func (s *Service) productForTask(ctx context.Context, taskID domain.TaskID) (*domain.Product, error) {
-	t, err := s.Tasks.ByID(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	return s.Products.ByID(ctx, t.ProductID)
+	_, p, err := s.taskAndActiveProduct(ctx, taskID)
+	return p, err
 }
 
 // UpdatePlanningArtifacts stores opaque planning JSON (e.g. clarifying Q&A) while in planning.
 func (s *Service) UpdatePlanningArtifacts(ctx context.Context, taskID domain.TaskID, clarificationsJSON string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -222,7 +247,7 @@ func (s *Service) UpdatePlanningArtifacts(ctx context.Context, taskID domain.Tas
 
 // SetStatusReasonOnly updates the free-text reason without moving the Kanban column.
 func (s *Service) SetStatusReasonOnly(ctx context.Context, taskID domain.TaskID, statusReason string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -233,7 +258,7 @@ func (s *Service) SetStatusReasonOnly(ctx context.Context, taskID domain.TaskID,
 
 // Dispatch sends work to the execution plane when the task is assigned (MC dispatch gate).
 func (s *Service) Dispatch(ctx context.Context, taskID domain.TaskID, estimatedCost float64) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -279,7 +304,7 @@ func (s *Service) Dispatch(ctx context.Context, taskID domain.TaskID, estimatedC
 
 // RecordCheckpoint persists crash-recovery state from the gateway stream.
 func (s *Service) RecordCheckpoint(ctx context.Context, taskID domain.TaskID, payload string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -315,7 +340,7 @@ func (s *Service) RecordCheckpoint(ctx context.Context, taskID domain.TaskID, pa
 
 // ListCheckpointHistory returns recent checkpoint revisions newest-first.
 func (s *Service) ListCheckpointHistory(ctx context.Context, taskID domain.TaskID, limit int) ([]domain.CheckpointHistoryEntry, error) {
-	if _, err := s.Tasks.ByID(ctx, taskID); err != nil {
+	if _, err := s.taskWithActiveProduct(ctx, taskID); err != nil {
 		return nil, err
 	}
 	return s.Checkpt.ListHistory(ctx, taskID, limit)
@@ -340,7 +365,7 @@ func (s *Service) OpenPullRequest(ctx context.Context, taskID domain.TaskID, hea
 	if s.Ship == nil {
 		return "", 0, fmt.Errorf("%w: pull request publisher not configured", domain.ErrInvalidInput)
 	}
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return "", 0, err
 	}
@@ -435,7 +460,7 @@ func trimSpecOneLine(spec string) string {
 
 // Complete marks the task finished (e.g. after agent-completion webhook).
 func (s *Service) Complete(ctx context.Context, taskID domain.TaskID) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -460,8 +485,9 @@ func (s *Service) UsesLiveActivityTX() bool { return s.LiveTX != nil }
 // CompleteWithLiveActivity completes the task, records agent health as completed when SQLite LiveTX is wired,
 // and emits task_completed (same DB transaction as domain writes, or hub/outbox publish on memory path).
 // source is stored in agent-health detail JSON (e.g. api_task_complete, agent_completion_webhook).
-func (s *Service) CompleteWithLiveActivity(ctx context.Context, taskID domain.TaskID, source string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+// Optional knowledgeSummary (first element only) is passed to KnowledgeAutoIngest when wired.
+func (s *Service) CompleteWithLiveActivity(ctx context.Context, taskID domain.TaskID, source string, knowledgeSummary ...string) error {
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -498,8 +524,24 @@ func (s *Service) CompleteWithLiveActivity(ctx context.Context, taskID domain.Ta
 	}
 	if runErr == nil {
 		s.maybeAutoMergeShip(ctx, taskID)
+		s.runKnowledgeAutoIngest(ctx, taskID, source, knowledgeSummary)
 	}
 	return runErr
+}
+
+func (s *Service) runKnowledgeAutoIngest(ctx context.Context, taskID domain.TaskID, source string, knowledgeSummary []string) {
+	if s.KnowledgeAutoIngest == nil {
+		return
+	}
+	sum := ""
+	if len(knowledgeSummary) > 0 {
+		sum = strings.TrimSpace(knowledgeSummary[0])
+	}
+	t2, err := s.taskWithActiveProduct(ctx, taskID)
+	if err != nil || t2 == nil {
+		return
+	}
+	s.KnowledgeAutoIngest(ctx, t2, source, sum)
 }
 
 // NudgeStall records an operator nudge for tasks in active execution statuses (Phase A manual policy).
@@ -511,7 +553,7 @@ func (s *Service) NudgeStall(ctx context.Context, taskID domain.TaskID, note str
 // nudgeStall implements stall nudge. When preserveHeartbeatAt is true (auto-nudge path), last_heartbeat_at is not
 // advanced to now so the task stays eligible for stalled detection and cooldown logic until a real agent heartbeat.
 func (s *Service) nudgeStall(ctx context.Context, taskID domain.TaskID, note string, preserveHeartbeatAt bool) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -609,7 +651,7 @@ func mergeStallNudgeDetail(existingJSON, note string, at time.Time) string {
 
 // PatchWorkspacePaths sets optional sandbox / worktree path metadata (operator-managed).
 func (s *Service) PatchWorkspacePaths(ctx context.Context, taskID domain.TaskID, sandboxPath, worktreePath *string) error {
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}

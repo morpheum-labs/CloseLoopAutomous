@@ -22,7 +22,7 @@ func (s *Service) openPullRequestWhenEligible(ctx context.Context, taskID domain
 	if s.Ship == nil || !tierEligible(tier) {
 		return nil
 	}
-	t, err := s.Tasks.ByID(ctx, taskID)
+	t, err := s.taskWithActiveProduct(ctx, taskID)
 	if err != nil {
 		return err
 	}

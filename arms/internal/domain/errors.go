@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 )
 
 var (
@@ -19,4 +20,10 @@ var (
 	ErrMergeShipBusy        = errors.New("merge queue lease held by another worker")
 	ErrNotConfigured        = errors.New("not configured")
 	ErrMergeGatesNotMet     = errors.New("merge gates not satisfied")
+	// ErrProductAlreadyDeleted wraps ErrConflict when soft-delete is applied to an already-deleted product.
+	ErrProductAlreadyDeleted = fmt.Errorf("%w: product already deleted", ErrConflict)
+	// ErrProductNotDeleted wraps ErrConflict when restore is applied to an active product.
+	ErrProductNotDeleted = fmt.Errorf("%w: product is not deleted", ErrConflict)
+	// ErrStaleEntity wraps ErrConflict when an optimistic update sees a changed row version (e.g. updated_at).
+	ErrStaleEntity = fmt.Errorf("%w: concurrent modification", ErrConflict)
 )

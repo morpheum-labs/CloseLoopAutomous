@@ -35,19 +35,30 @@ func (s *ProductStore) ByID(_ context.Context, id domain.ProductID) (*domain.Pro
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.data[id]
-	if !ok {
+	if !ok || p.IsDeleted() {
 		return nil, domain.ErrNotFound
 	}
 	cp := *p
 	return &cp, nil
 }
 
-func (s *ProductStore) ListAll(_ context.Context) ([]domain.Product, error) {
+func (s *ProductStore) ListAll(ctx context.Context) ([]domain.Product, error) {
+	return s.listSorted(ctx, true)
+}
+
+func (s *ProductStore) ListAllIncludingDeleted(ctx context.Context) ([]domain.Product, error) {
+	return s.listSorted(ctx, false)
+}
+
+// listSorted returns products ordered by id. If activeOnly, soft-deleted rows are omitted.
+func (s *ProductStore) listSorted(_ context.Context, activeOnly bool) ([]domain.Product, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ids := make([]domain.ProductID, 0, len(s.data))
-	for id := range s.data {
-		ids = append(ids, id)
+	for id, p := range s.data {
+		if !activeOnly || !p.IsDeleted() {
+			ids = append(ids, id)
+		}
 	}
 	sort.Slice(ids, func(i, j int) bool { return string(ids[i]) < string(ids[j]) })
 	out := make([]domain.Product, 0, len(ids))
@@ -56,6 +67,65 @@ func (s *ProductStore) ListAll(_ context.Context) ([]domain.Product, error) {
 		out = append(out, cp)
 	}
 	return out, nil
+}
+
+func (s *ProductStore) SoftDelete(_ context.Context, id domain.ProductID, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.data[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if p.IsDeleted() {
+		return domain.ErrProductAlreadyDeleted
+	}
+	p.MarkDeleted(at)
+	return nil
+}
+
+func (s *ProductStore) Restore(_ context.Context, id domain.ProductID, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.data[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if !p.IsDeleted() {
+		return domain.ErrProductNotDeleted
+	}
+	p.ClearDeletion(at)
+	return nil
+}
+
+func (s *ProductStore) SaveIfUnchangedSince(_ context.Context, p *domain.Product, since time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.data[p.ID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if cur.IsDeleted() {
+		return domain.ErrNotFound
+	}
+	if !cur.UpdatedAt.Equal(since.UTC()) {
+		return domain.ErrStaleEntity
+	}
+	cp := *p
+	s.data[p.ID] = &cp
+	return nil
+}
+
+func (s *ProductStore) CountLifecycle(_ context.Context) (active int, deleted int, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.data {
+		if p.IsDeleted() {
+			deleted++
+		} else {
+			active++
+		}
+	}
+	return active, deleted, nil
 }
 
 var _ ports.ProductRepository = (*ProductStore)(nil)

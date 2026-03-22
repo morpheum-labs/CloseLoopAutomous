@@ -7,10 +7,22 @@ import (
 	"github.com/closeloopautomous/arms/internal/domain"
 )
 
+// ProductRepository persists products. Active vs soft-deleted is defined in domain: (*Product).IsDeleted().
+// ByID and ListAll return only active products; SoftDelete/Restore enforce domain.ErrProductAlreadyDeleted / ErrProductNotDeleted.
 type ProductRepository interface {
 	Save(ctx context.Context, p *domain.Product) error
 	ByID(ctx context.Context, id domain.ProductID) (*domain.Product, error)
 	ListAll(ctx context.Context) ([]domain.Product, error)
+	// ListAllIncludingDeleted returns every row (including tombstones); used for ops / GET ?include_deleted=.
+	ListAllIncludingDeleted(ctx context.Context) ([]domain.Product, error)
+	SoftDelete(ctx context.Context, id domain.ProductID, at time.Time) error
+	// Restore clears soft-delete; at is stored as updated_at.
+	Restore(ctx context.Context, id domain.ProductID, at time.Time) error
+	// SaveIfUnchangedSince updates an existing row only if updated_at still equals since (optimistic concurrency).
+	// Inserts use Save (e.g. Register). On mismatch returns domain.ErrStaleEntity.
+	SaveIfUnchangedSince(ctx context.Context, p *domain.Product, since time.Time) error
+	// CountLifecycle returns active (non–soft-deleted) and soft-deleted product counts.
+	CountLifecycle(ctx context.Context) (active int, deleted int, err error)
 }
 
 // PreferenceModelRepository stores per-product learned preference payloads (separate from legacy products.preference_model_json).

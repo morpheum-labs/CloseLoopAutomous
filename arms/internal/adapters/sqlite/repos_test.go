@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -86,5 +87,100 @@ func TestProductIdeaTaskRoundTrip(t *testing.T) {
 	clist, err := cs.ListByProduct(ctx, domain.ProductID("prod-1"))
 	if err != nil || len(clist) != 1 || clist[0].ID != "conv-1" || len(clist[0].Subtasks) != 1 {
 		t.Fatalf("convoys list: %v err %v", clist, err)
+	}
+}
+
+func TestProductSoftDelete(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	ps := NewProductStore(db)
+	now := time.Unix(1700000000, 0).UTC()
+	pid := domain.ProductID("prod-del")
+	p := &domain.Product{
+		ID: pid, Name: "n", Stage: domain.StageResearch, ResearchSummary: "",
+		WorkspaceID: "ws", UpdatedAt: now,
+	}
+	if err := ps.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	delAt := now.Add(time.Minute)
+	if err := ps.SoftDelete(ctx, pid, delAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ps.ByID(ctx, pid); err != domain.ErrNotFound {
+		t.Fatalf("ByID after delete: %v", err)
+	}
+	active, err := ps.ListAll(ctx)
+	if err != nil || len(active) != 0 {
+		t.Fatalf("ListAll active: %v len %d", err, len(active))
+	}
+	all, err := ps.ListAllIncludingDeleted(ctx)
+	if err != nil || len(all) != 1 || !all[0].DeletedAt.Equal(delAt.UTC()) {
+		t.Fatalf("ListAllIncludingDeleted: %+v err %v", all, err)
+	}
+	if err := ps.SoftDelete(ctx, pid, now); err == nil || !errors.Is(err, domain.ErrProductAlreadyDeleted) {
+		t.Fatalf("second SoftDelete want ErrProductAlreadyDeleted, got %v", err)
+	}
+	restoreAt := delAt.Add(time.Hour)
+	if err := ps.Restore(ctx, pid, restoreAt); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := ps.ByID(ctx, pid)
+	if err != nil || p2.Name != "n" || p2.IsDeleted() {
+		t.Fatalf("after restore: %+v err %v", p2, err)
+	}
+	if err := ps.Restore(ctx, pid, restoreAt); err == nil || !errors.Is(err, domain.ErrProductNotDeleted) {
+		t.Fatalf("Restore when active want ErrProductNotDeleted, got %v", err)
+	}
+	a, d, err := ps.CountLifecycle(ctx)
+	if err != nil || a != 1 || d != 0 {
+		t.Fatalf("CountLifecycle after restore: active=%d deleted=%d err %v", a, d, err)
+	}
+}
+
+func TestProductSaveIfUnchangedSince(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	ps := NewProductStore(db)
+	now := time.Unix(1700000000, 0).UTC()
+	p := &domain.Product{
+		ID: domain.ProductID("p-opt"), Name: "a", Stage: domain.StageResearch, ResearchSummary: "",
+		WorkspaceID: "ws", UpdatedAt: now,
+	}
+	if err := ps.Save(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ps.ByID(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(time.Hour)
+	loaded.Name = "b"
+	loaded.UpdatedAt = later
+	if err := ps.SaveIfUnchangedSince(ctx, loaded, now); err != nil {
+		t.Fatal(err)
+	}
+	again, err := ps.ByID(ctx, p.ID)
+	if err != nil || again.Name != "b" {
+		t.Fatalf("after optimistic save: %+v err %v", again, err)
+	}
+	again.Name = "c"
+	again.UpdatedAt = later.Add(time.Hour)
+	if err := ps.SaveIfUnchangedSince(ctx, again, now); err == nil || !errors.Is(err, domain.ErrStaleEntity) {
+		t.Fatalf("second save want ErrStaleEntity, got %v", err)
 	}
 }

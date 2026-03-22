@@ -30,7 +30,7 @@ func (s *Service) Append(ctx context.Context, taskID domain.TaskID, body string,
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.Products.ByID(ctx, t.ProductID); err != nil {
+	if err := ports.RequireActiveProduct(ctx, s.Products, t.ProductID); err != nil {
 		return nil, err
 	}
 	now := s.Clock.Now()
@@ -72,7 +72,11 @@ func trimPreview(s string, n int) string {
 
 // ListByTask returns chronological chat for a task (oldest first among the last `limit` rows).
 func (s *Service) ListByTask(ctx context.Context, taskID domain.TaskID, limit int) ([]domain.TaskChatMessage, error) {
-	if _, err := s.Tasks.ByID(ctx, taskID); err != nil {
+	t, err := s.Tasks.ByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ports.RequireActiveProduct(ctx, s.Products, t.ProductID); err != nil {
 		return nil, err
 	}
 	return s.Chat.ListByTask(ctx, taskID, limit)

@@ -19,6 +19,8 @@ type Service struct {
 	DispatchSnippetLimit int
 	// UseFTSQuerySyntax when true passes SanitizeFTS5Query(q) to Search/List paths that need FTS (SQLite). When false, raw trimmed text is used (chromem, memory).
 	UseFTSQuerySyntax bool
+	// AutoIngest when true writes knowledge rows from swipes, product feedback, and task completion (default on; disable with ARMS_KNOWLEDGE_AUTO_INGEST=0).
+	AutoIngest bool
 }
 
 // Get returns one entry scoped to product.
@@ -126,8 +128,11 @@ func (s *Service) Search(ctx context.Context, productID domain.ProductID, q stri
 	if _, err := s.Products.ByID(ctx, productID); err != nil {
 		return nil, err
 	}
-	fts := SanitizeFTS5Query(q)
-	return s.Repo.Search(ctx, productID, fts, limit)
+	query := strings.TrimSpace(q)
+	if s.UseFTSQuerySyntax {
+		query = SanitizeFTS5Query(q)
+	}
+	return s.Repo.Search(ctx, productID, query, limit)
 }
 
 // MarkdownBlockForDispatch returns markdown to append to OpenClaw dispatch bodies.

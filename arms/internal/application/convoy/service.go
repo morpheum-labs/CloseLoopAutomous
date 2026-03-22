@@ -37,7 +37,11 @@ func (s *Service) maxDispatchAttempts() int {
 
 // Create attaches subtasks to a parent task (roles + dependencies only; no dispatch).
 func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Convoy, error) {
-	if _, err := s.Tasks.ByID(ctx, in.ParentTaskID); err != nil {
+	parent, err := s.Tasks.ByID(ctx, in.ParentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := ports.RequireActiveProduct(ctx, s.Products, parent.ProductID); err != nil {
 		return nil, err
 	}
 	subtasks := in.Subtasks
@@ -76,6 +80,37 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*domain.Convoy, e
 // Get returns a convoy by id or ErrNotFound.
 func (s *Service) Get(ctx context.Context, id domain.ConvoyID) (*domain.Convoy, error) {
 	return s.Convoys.ByID(ctx, id)
+}
+
+// Graph returns MC-style DAG detail: stable topological order, explicit edges, and dag_layer buckets.
+func (s *Service) Graph(ctx context.Context, id domain.ConvoyID) (*GraphDetail, error) {
+	c, err := s.Convoys.ByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	order, err := StableTopologicalSubtaskOrder(c.Subtasks)
+	if err != nil {
+		return nil, fmt.Errorf("%w: convoy graph invalid (cycle or corrupt): %v", domain.ErrInvalidInput, err)
+	}
+	edgeCount := 0
+	maxLayer := 0
+	for i := range c.Subtasks {
+		edgeCount += len(c.Subtasks[i].DependsOn)
+		if c.Subtasks[i].DagLayer > maxLayer {
+			maxLayer = c.Subtasks[i].DagLayer
+		}
+	}
+	return &GraphDetail{
+		ConvoyID:         string(id),
+		TopologicalOrder: order,
+		Edges:            SubtaskDependencyEdges(c.Subtasks),
+		Layers:           SubtaskLayers(c.Subtasks),
+		GraphSummary: map[string]any{
+			"node_count": len(c.Subtasks),
+			"edge_count": edgeCount,
+			"max_depth":  maxLayer,
+		},
+	}, nil
 }
 
 // ListByProduct returns convoys for a product (newest first), or ErrNotFound if the product does not exist.
@@ -217,6 +252,9 @@ func (s *Service) CompleteSubtask(ctx context.Context, convoyID domain.ConvoyID,
 	}
 	if c.ParentID != parentTaskID {
 		return fmt.Errorf("%w: task_id does not match convoy parent", domain.ErrInvalidInput)
+	}
+	if err := ports.RequireActiveProduct(ctx, s.Products, c.ProductID); err != nil {
+		return err
 	}
 	idx := -1
 	for i := range c.Subtasks {

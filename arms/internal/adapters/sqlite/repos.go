@@ -29,15 +29,19 @@ func (s *ProductStore) Save(ctx context.Context, p *domain.Product) error {
 	if mpj == "" {
 		mpj = "{}"
 	}
+	var deletedArg any
+	if !p.DeletedAt.IsZero() {
+		deletedArg = p.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO products (
   id, name, stage, research_summary, workspace_id,
   repo_url, repo_clone_path, repo_branch, description, program_document, settings_json, icon_url,
   research_cadence_sec, ideation_cadence_sec, automation_tier, auto_dispatch_enabled,
   last_auto_research_at, last_auto_ideation_at, preference_model_json,
-  merge_policy_json, updated_at
+  merge_policy_json, deleted_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   name = excluded.name,
   stage = excluded.stage,
@@ -58,12 +62,14 @@ ON CONFLICT(id) DO UPDATE SET
   last_auto_ideation_at = excluded.last_auto_ideation_at,
   preference_model_json = excluded.preference_model_json,
   merge_policy_json = excluded.merge_policy_json,
+  deleted_at = excluded.deleted_at,
   updated_at = excluded.updated_at
 `, string(p.ID), p.Name, int(p.Stage), p.ResearchSummary, p.WorkspaceID,
 		p.RepoURL, p.RepoClonePath, p.RepoBranch, p.Description, p.ProgramDocument, p.SettingsJSON, p.IconURL,
 		p.ResearchCadenceSec, p.IdeationCadenceSec, tier, boolInt(p.AutoDispatchEnabled),
 		formatOptionalTime(p.LastAutoResearchAt), formatOptionalTime(p.LastAutoIdeationAt), p.PreferenceModelJSON,
 		mpj,
+		deletedArg,
 		p.UpdatedAt.Format(time.RFC3339Nano))
 	return err
 }
@@ -72,10 +78,10 @@ const productSelectCols = `id, name, stage, research_summary, workspace_id,
   repo_url, repo_clone_path, repo_branch, description, program_document, settings_json, icon_url,
   research_cadence_sec, ideation_cadence_sec, automation_tier, auto_dispatch_enabled,
   last_auto_research_at, last_auto_ideation_at, preference_model_json,
-  merge_policy_json, updated_at`
+  merge_policy_json, deleted_at, updated_at`
 
 func (s *ProductStore) ByID(ctx context.Context, id domain.ProductID) (*domain.Product, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+productSelectCols+` FROM products WHERE id = ?`, string(id))
+	row := s.db.QueryRowContext(ctx, `SELECT `+productSelectCols+` FROM products WHERE id = ? AND deleted_at IS NULL`, string(id))
 	p, err := scanProductRow(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -87,6 +93,23 @@ func (s *ProductStore) ByID(ctx context.Context, id domain.ProductID) (*domain.P
 }
 
 func (s *ProductStore) ListAll(ctx context.Context) ([]domain.Product, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+productSelectCols+` FROM products WHERE deleted_at IS NULL ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Product
+	for rows.Next() {
+		p, err := scanProductRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
+func (s *ProductStore) ListAllIncludingDeleted(ctx context.Context) ([]domain.Product, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+productSelectCols+` FROM products ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -103,18 +126,144 @@ func (s *ProductStore) ListAll(ctx context.Context) ([]domain.Product, error) {
 	return out, rows.Err()
 }
 
+func (s *ProductStore) SoftDelete(ctx context.Context, id domain.ProductID, at time.Time) error {
+	atStr := at.UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE products SET deleted_at = ?, updated_at = ?
+WHERE id = ? AND deleted_at IS NULL`, atStr, atStr, string(id))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	var del sql.NullString
+	switch err := s.db.QueryRowContext(ctx, `SELECT deleted_at FROM products WHERE id = ?`, string(id)).Scan(&del); {
+	case err == sql.ErrNoRows:
+		return domain.ErrNotFound
+	case err != nil:
+		return err
+	}
+	if del.Valid && strings.TrimSpace(del.String) != "" {
+		return domain.ErrProductAlreadyDeleted
+	}
+	return domain.ErrNotFound
+}
+
+func (s *ProductStore) Restore(ctx context.Context, id domain.ProductID, at time.Time) error {
+	atStr := at.UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE products SET deleted_at = NULL, updated_at = ?
+WHERE id = ? AND deleted_at IS NOT NULL`, atStr, string(id))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	var del sql.NullString
+	switch err := s.db.QueryRowContext(ctx, `SELECT deleted_at FROM products WHERE id = ?`, string(id)).Scan(&del); {
+	case err == sql.ErrNoRows:
+		return domain.ErrNotFound
+	case err != nil:
+		return err
+	}
+	if !del.Valid || strings.TrimSpace(del.String) == "" {
+		return domain.ErrProductNotDeleted
+	}
+	return domain.ErrNotFound
+}
+
+func (s *ProductStore) SaveIfUnchangedSince(ctx context.Context, p *domain.Product, since time.Time) error {
+	tier := string(p.AutomationTier)
+	if tier == "" {
+		tier = string(domain.TierSupervised)
+	}
+	mpj := strings.TrimSpace(p.MergePolicyJSON)
+	if mpj == "" {
+		mpj = "{}"
+	}
+	var deletedArg any
+	if !p.DeletedAt.IsZero() {
+		deletedArg = p.DeletedAt.UTC().Format(time.RFC3339Nano)
+	}
+	sinceStr := since.UTC().Format(time.RFC3339Nano)
+	newUpdated := p.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx, `
+UPDATE products SET
+  name = ?, stage = ?, research_summary = ?, workspace_id = ?,
+  repo_url = ?, repo_clone_path = ?, repo_branch = ?, description = ?, program_document = ?, settings_json = ?, icon_url = ?,
+  research_cadence_sec = ?, ideation_cadence_sec = ?, automation_tier = ?, auto_dispatch_enabled = ?,
+  last_auto_research_at = ?, last_auto_ideation_at = ?, preference_model_json = ?,
+  merge_policy_json = ?, deleted_at = ?, updated_at = ?
+WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`,
+		p.Name, int(p.Stage), p.ResearchSummary, p.WorkspaceID,
+		p.RepoURL, p.RepoClonePath, p.RepoBranch, p.Description, p.ProgramDocument, p.SettingsJSON, p.IconURL,
+		p.ResearchCadenceSec, p.IdeationCadenceSec, tier, boolInt(p.AutoDispatchEnabled),
+		formatOptionalTime(p.LastAutoResearchAt), formatOptionalTime(p.LastAutoIdeationAt), p.PreferenceModelJSON,
+		mpj, deletedArg, newUpdated,
+		string(p.ID), sinceStr)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	row := s.db.QueryRowContext(ctx, `SELECT updated_at, deleted_at FROM products WHERE id = ?`, string(p.ID))
+	var curUpdated string
+	var delNS sql.NullString
+	switch err := row.Scan(&curUpdated, &delNS); {
+	case err == sql.ErrNoRows:
+		return domain.ErrNotFound
+	case err != nil:
+		return err
+	}
+	if delNS.Valid && strings.TrimSpace(delNS.String) != "" {
+		return domain.ErrNotFound
+	}
+	if strings.TrimSpace(curUpdated) != sinceStr {
+		return domain.ErrStaleEntity
+	}
+	return domain.ErrNotFound
+}
+
+func (s *ProductStore) CountLifecycle(ctx context.Context) (active int, deleted int, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM products WHERE deleted_at IS NULL`).Scan(&active)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM products WHERE deleted_at IS NOT NULL`).Scan(&deleted)
+	if err != nil {
+		return 0, 0, err
+	}
+	return active, deleted, nil
+}
+
 func scanProductRow(row interface{ Scan(dest ...any) error }) (*domain.Product, error) {
 	var (
 		sid, name, summary, ws                                        string
 		repoURL, repoClone, branch, desc, program, settings, icon, updated string
 		tierStr, prefJSON, mergePolJSON                               string
 		lastRes, lastIde                                              string
+		deletedNS                                                     sql.NullString
 		stage, resCad, ideCad, autoDisp                               int
 	)
 	if err := row.Scan(&sid, &name, &stage, &summary, &ws,
 		&repoURL, &repoClone, &branch, &desc, &program, &settings, &icon,
 		&resCad, &ideCad, &tierStr, &autoDisp, &lastRes, &lastIde, &prefJSON,
-		&mergePolJSON, &updated); err != nil {
+		&mergePolJSON, &deletedNS, &updated); err != nil {
 		return nil, err
 	}
 	tier, err := domain.ParseAutomationTier(tierStr)
@@ -127,6 +276,10 @@ func scanProductRow(row interface{ Scan(dest ...any) error }) (*domain.Product, 
 	}
 	lr, _ := parseOptionalTime(lastRes)
 	li, _ := parseOptionalTime(lastIde)
+	var delAt time.Time
+	if deletedNS.Valid {
+		delAt, _ = parseOptionalTime(deletedNS.String)
+	}
 	return &domain.Product{
 		ID:                  domain.ProductID(sid),
 		Name:                name,
@@ -148,6 +301,7 @@ func scanProductRow(row interface{ Scan(dest ...any) error }) (*domain.Product, 
 		LastAutoIdeationAt:  li,
 		PreferenceModelJSON: prefJSON,
 		MergePolicyJSON:     mergePolJSON,
+		DeletedAt:           delAt,
 		UpdatedAt:           ut,
 	}, nil
 }

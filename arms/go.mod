@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/coder/websocket v1.8.12
+	github.com/dominikbraun/graph v0.23.0
 	github.com/google/go-github/v66 v66.0.0
 	github.com/google/uuid v1.6.0
 	github.com/hibiken/asynq v0.24.1

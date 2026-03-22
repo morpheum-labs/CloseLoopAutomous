@@ -222,6 +222,10 @@ components:
           format: date-time
           description: Omitted when never run
         updated_at: { type: string, format: date-time }
+        deleted_at:
+          type: string
+          format: date-time
+          description: Present when product is soft-deleted (e.g. GET /api/products?include_deleted=true)
 
     Idea:
       type: object
@@ -366,6 +370,41 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Convoy" }
 
+    ConvoyGraphEdge:
+      type: object
+      properties:
+        from: { type: string, description: "Dependency (upstream) subtask id" }
+        to: { type: string, description: "Dependent subtask id" }
+
+    ConvoyGraphLayer:
+      type: object
+      properties:
+        layer: { type: integer, description: "dag_layer (0 = root)" }
+        subtask_ids:
+          type: array
+          items: { type: string }
+
+    ConvoyGraphResponse:
+      type: object
+      properties:
+        convoy_id: { type: string }
+        topological_order:
+          type: array
+          items: { type: string }
+          description: Stable dependency order (dependencies before dependents; lexicographic tie-break)
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/ConvoyGraphEdge" }
+        layers:
+          type: array
+          items: { $ref: "#/components/schemas/ConvoyGraphLayer" }
+        graph:
+          type: object
+          properties:
+            node_count: { type: integer }
+            edge_count: { type: integer }
+            max_depth: { type: integer }
+
     CreateProductRequest:
       type: object
       required: [name, workspace_id]
@@ -485,6 +524,9 @@ components:
           type: string
           enum: [testing, review, done]
           description: "Optional; full_auto/semi_auto only — advance board instead of completing (omit or done = complete task)"
+        knowledge_summary:
+          type: string
+          description: "Optional; when the task completes (done path), stored as auto-ingested product knowledge if ARMS_KNOWLEDGE_AUTO_INGEST is enabled"
 
     CiCompletionRequest:
       type: object
@@ -496,6 +538,9 @@ components:
           enum: [testing, review, done, failed]
           description: "CI-driven Kanban target; failed defaults status_reason to CI reported failure if omitted"
         status_reason: { type: string, description: "Optional; used for failed and other SetKanbanStatus moves" }
+        knowledge_summary:
+          type: string
+          description: "Optional; when next_board_status is done, stored as auto-ingested product knowledge if ARMS_KNOWLEDGE_AUTO_INGEST is enabled"
 
     HealthResponse:
       type: object
@@ -523,6 +568,20 @@ components:
         dirty:
           type: boolean
           description: True when version string ends with -dirty
+
+    OpsSummaryResponse:
+      type: object
+      properties:
+        schema_version_expected:
+          type: integer
+          description: Embedded SQLite migration ceiling (arms_schema_version target)
+        build_version: { type: string }
+        build_commit: { type: string }
+        products:
+          type: object
+          properties:
+            active: { type: integer, format: int64 }
+            deleted: { type: integer, format: int64 }
 
     RoutesResponse:
       type: object
@@ -564,6 +623,18 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/VersionResponse" }
 
+  /api/ops/summary:
+    get:
+      tags: [Health]
+      summary: Operator snapshot (schema version, build, product lifecycle counts)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OpsSummaryResponse" }
+
   /api/docs/routes:
     get:
       tags: [Health]
@@ -577,6 +648,28 @@ paths:
               schema: { $ref: "#/components/schemas/RoutesResponse" }
 
   /api/products:
+    get:
+      tags: [Products]
+      summary: List products
+      parameters:
+        - name: include_deleted
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1", "true"]
+          description: When set, include soft-deleted products (each has deleted_at)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items: { $ref: "#/components/schemas/Product" }
     post:
       tags: [Products]
       summary: Register product
@@ -629,6 +722,37 @@ paths:
           description: Validation
         "404":
           description: Not found
+        "409":
+          description: Concurrent modification (updated_at changed since read; code stale_entity)
+    delete:
+      tags: [Products]
+      summary: Soft-delete product
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      responses:
+        "204":
+          description: No content
+        "404":
+          description: Not found
+        "409":
+          description: Already deleted
+
+  /api/products/{id}/restore:
+    post:
+      tags: [Products]
+      summary: Restore soft-deleted product
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "404":
+          description: Not found
+        "409":
+          description: Not deleted
 
   /api/products/{id}/research:
     post:
@@ -1241,6 +1365,27 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Convoy" }
+
+  /api/convoys/{id}/graph:
+    get:
+      tags: [Convoys]
+      summary: Get convoy DAG (topological order, edges, layers)
+      description: |
+        Builds a directed graph from `depends_on` (github.com/dominikbraun/graph) and returns a stable topological order,
+        explicit edges, and subtasks grouped by `dag_layer`.
+      parameters:
+        - $ref: "#/components/parameters/convoyId"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConvoyGraphResponse" }
+        "400":
+          description: Invalid or cyclic DAG in storage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/convoys/{id}/mail:
     get:
