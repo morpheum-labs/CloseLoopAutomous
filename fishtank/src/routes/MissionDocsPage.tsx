@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import {
   BookOpen,
   ExternalLink,
+  Eye,
   FileText,
   Pencil,
   Plus,
@@ -10,13 +11,19 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { ArmsHttpError } from '../api/armsClient';
+import { ArmsHttpError, fetchProductTfidfSuggestTags } from '../api/armsClient';
 import type { ApiKnowledgeEntry } from '../api/armsTypes';
 import { useMissionUi } from '../context/MissionUiContext';
 import { formatRelativeTime } from '../lib/time';
+import { MarkdownReadModal } from '../components/docs/MarkdownReadModal';
 
 const LIST_LIMIT = 150;
-const DEBOUNCE_MS = 320;
+/** Debounce before calling arms TF-IDF for category + tags (create/write + edit). */
+const CONTENT_METADATA_SUGGEST_MS = 2000;
+/** Minimum trimmed length before calling arms (tokenization still needs real words). */
+const CONTENT_METADATA_MIN_CHARS = 12;
+const TFIDF_EXTRA_CORPUS_MAX_ENTRIES = 80;
+const TFIDF_EXTRA_CORPUS_MAX_CHARS = 2000;
 
 function previewLine(content: string, max = 140): string {
   const t = content.trim().replace(/\s+/g, ' ');
@@ -43,6 +50,24 @@ function metaChips(metadata: Record<string, unknown>): string[] {
   return chips;
 }
 
+/** Client-side filter on the loaded page (up to LIST_LIMIT): each token must appear in content or metadata chips. */
+function filterKnowledgeByQuery(entries: ApiKnowledgeEntry[], rawQuery: string): ApiKnowledgeEntry[] {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return entries;
+  const tokens = q
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return entries;
+  return entries.filter((e) => {
+    const content = e.content.toLowerCase();
+    const chips = metaChips(e.metadata ?? {}).map((c) => c.toLowerCase());
+    const hay = `${content}\n${chips.join('\n')}`;
+    return tokens.every((t) => hay.includes(t));
+  });
+}
+
 function buildMetadata(category: string, tagsRaw: string): Record<string, unknown> | undefined {
   const meta: Record<string, unknown> = {};
   const c = category.trim();
@@ -65,6 +90,48 @@ function parseMetaForForm(metadata: Record<string, unknown>): { category: string
     tags = tagsVal;
   }
   return { category, tags };
+}
+
+/** Maps TF-IDF tokens to a single knowledge `metadata.category` label (freeform, Docs-oriented). */
+const KNOWLEDGE_CATEGORY_HINTS: { category: string; needles: string[] }[] = [
+  { category: 'newsletter', needles: ['newsletter', 'subscriber', 'email', 'digest', 'campaign', 'unsubscribe'] },
+  { category: 'planning', needles: ['plan', 'roadmap', 'milestone', 'strategy', 'backlog', 'priorit', 'objective', 'okr'] },
+  { category: 'runbook', needles: ['runbook', 'playbook', 'incident', 'oncall', 'pager', 'outage', 'rollback', 'postmortem'] },
+  { category: 'product', needles: ['product', 'feature', 'user', 'persona', 'ux', 'ui'] },
+  { category: 'security', needles: ['security', 'auth', 'oauth', 'password', 'csrf', 'xss', 'cve', 'encrypt'] },
+  { category: 'integration', needles: ['api', 'webhook', 'integration', 'stripe', 'github', 'slack'] },
+  { category: 'operations', needles: ['ops', 'deploy', 'ci', 'cd', 'monitor', 'metric', 'sla', 'dashboard', 'logging'] },
+  { category: 'content', needles: ['content', 'copy', 'blog', 'documentation', 'docs', 'guide', 'tutorial'] },
+  { category: 'growth', needles: ['growth', 'marketing', 'seo', 'conversion', 'funnel', 'analytics'] },
+  { category: 'monetization', needles: ['pricing', 'billing', 'subscription', 'revenue', 'payment', 'checkout'] },
+];
+
+function tokenMatchesNeedle(token: string, needle: string): boolean {
+  return token === needle || token.includes(needle) || needle.includes(token);
+}
+
+function inferKnowledgeCategoryFromTags(tags: { token: string; score: number }[]): string {
+  let bestCat = '';
+  let best = 0;
+  for (const { category, needles } of KNOWLEDGE_CATEGORY_HINTS) {
+    let s = 0;
+    for (const { token, score } of tags) {
+      const t = token.toLowerCase();
+      for (const n of needles) {
+        if (tokenMatchesNeedle(t, n)) {
+          s += score;
+          break;
+        }
+      }
+    }
+    if (s > best) {
+      best = s;
+      bestCat = category;
+    }
+  }
+  if (bestCat) return bestCat;
+  if (tags.length > 0) return tags[0].token;
+  return '';
 }
 
 type SourceFormat = 'markdown' | 'pdf' | 'word';
@@ -201,7 +268,6 @@ export function MissionDocsPage() {
   const [knowledgeOff, setKnowledgeOff] = useState(false);
 
   const [searchInput, setSearchInput] = useState('');
-  const [debouncedQ, setDebouncedQ] = useState('');
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -212,29 +278,33 @@ export function MissionDocsPage() {
   const [formTags, setFormTags] = useState('');
   const [formBusy, setFormBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [metadataSuggestBusy, setMetadataSuggestBusy] = useState(false);
+  const [metadataSuggestError, setMetadataSuggestError] = useState<string | null>(null);
+  const [readOpen, setReadOpen] = useState(false);
 
-  const [createMode, setCreateMode] = useState<'write' | 'upload'>('write');
+  const [createMode, setCreateMode] = useState<'write' | 'upload'>('upload');
   const [dropVisual, setDropVisual] = useState<DropVisual>('idle');
   const [uploadMeta, setUploadMeta] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebouncedQ(searchInput), DEBOUNCE_MS);
-    return () => window.clearTimeout(t);
-  }, [searchInput]);
+  /** When editing, skip TF-IDF until content differs from this snapshot (set in openEdit). */
+  const contentSuggestBaselineRef = useRef<string | null>(null);
+  /** Ignore stale list responses when productId changes or multiple loads overlap. */
+  const knowledgeFetchGen = useRef(0);
 
   const load = useCallback(async () => {
     if (!productId) return;
+    const gen = ++knowledgeFetchGen.current;
     setLoading(true);
     setError(null);
     setKnowledgeOff(false);
     try {
       const list = await client.listProductKnowledge(productId, {
         limit: LIST_LIMIT,
-        q: debouncedQ.trim() || undefined,
       });
+      if (gen !== knowledgeFetchGen.current) return;
       setEntries(list);
     } catch (e) {
+      if (gen !== knowledgeFetchGen.current) return;
       setEntries([]);
       if (e instanceof ArmsHttpError && e.status === 503) {
         setKnowledgeOff(true);
@@ -242,13 +312,145 @@ export function MissionDocsPage() {
         setError(e instanceof ArmsHttpError ? `${e.message} (${e.status})` : 'Could not load knowledge.');
       }
     } finally {
-      setLoading(false);
+      if (gen === knowledgeFetchGen.current) setLoading(false);
     }
-  }, [client, productId, debouncedQ]);
+  }, [client, productId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!productId) {
+      knowledgeFetchGen.current += 1;
+      setEntries([]);
+      setLoading(false);
+      setError(null);
+      setKnowledgeOff(false);
+    }
+  }, [productId]);
+
+  useEffect(() => {
+    setReadOpen(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    if (!productId || formBusy) {
+      return undefined;
+    }
+    // Run for any create/edit with enough text — not only Write tab (import sets Write; this avoids missing a beat if mode lags).
+    if (!creating && !editing) {
+      return undefined;
+    }
+
+    const text = formContent.trim();
+    if (text.length < CONTENT_METADATA_MIN_CHARS) {
+      setMetadataSuggestError(null);
+      return undefined;
+    }
+    if (
+      editing &&
+      contentSuggestBaselineRef.current != null &&
+      text === contentSuggestBaselineRef.current.trim()
+    ) {
+      return undefined;
+    }
+
+    const categoryTrimmed = formCategory.trim();
+    const hasTags = formTags.split(',').some((t) => t.trim().length > 0);
+    if (categoryTrimmed !== '' && hasTags) {
+      setMetadataSuggestError(null);
+      return undefined;
+    }
+
+    timer = window.setTimeout(() => {
+      void (async () => {
+        if (cancelled) return;
+        setMetadataSuggestBusy(true);
+        setMetadataSuggestError(null);
+        try {
+          const extraCorpus = entries
+            .filter((e) => !(editing && selectedId != null && e.id === selectedId))
+            .slice(0, TFIDF_EXTRA_CORPUS_MAX_ENTRIES)
+            .map((e) => e.content.slice(0, TFIDF_EXTRA_CORPUS_MAX_CHARS))
+            .filter((s) => s.trim().length > 0);
+          const res = await fetchProductTfidfSuggestTags(armsEnv, productId, {
+            text,
+            top_k: 16,
+            min_token_len: 2,
+            ...(extraCorpus.length ? { extra_corpus: extraCorpus } : {}),
+          });
+          if (cancelled) return;
+          const tags = res.tags ?? [];
+          if (tags.length === 0) {
+            setMetadataSuggestError(
+              'No keywords returned for this text (often stopwords only). Add more specific words or set category/tags manually.',
+            );
+            return;
+          }
+          setMetadataSuggestError(null);
+          setFormTags(tags.map((t) => t.token).slice(0, 12).join(', '));
+          const cat = inferKnowledgeCategoryFromTags(tags);
+          if (cat) setFormCategory(cat);
+        } catch (e) {
+          if (cancelled) return;
+          if (e instanceof ArmsHttpError) {
+            if (e.status === 403) {
+              setMetadataSuggestError(
+                'Tag suggestions need arms credentials that allow POST (HTTP Basic with role "read" can list docs but not this endpoint — use a Bearer token or Basic admin).',
+              );
+            } else if (e.status === 0 || e.code === 'network') {
+              setMetadataSuggestError(
+                `Browser could not complete the request to ${armsEnv.baseUrl} (${e.message}). ` +
+                  'Cross-origin POST needs CORS: set arms env ARMS_CORS_ALLOW_ORIGIN to this page’s exact origin ' +
+                  '(e.g. http://localhost:5173 for Bun dev — see docs/setup-guide.md). Then restart arms.',
+              );
+            } else {
+              setMetadataSuggestError(`${e.message} (${e.status})`);
+            }
+          } else {
+            const raw = e instanceof Error ? e.message : String(e);
+            if (raw.includes('is not a function')) {
+              setMetadataSuggestError(
+                'Tag suggestions failed: the UI bundle was out of date (restart `bun run dev` and hard-refresh). If this persists, pull latest Fishtank sources.',
+              );
+            } else {
+              setMetadataSuggestError(
+                `Tag suggestions failed: ${raw}. Check VITE_ARMS_URL (using ${armsEnv.baseUrl}).`,
+              );
+            }
+          }
+        } finally {
+          if (!cancelled) setMetadataSuggestBusy(false);
+        }
+      })();
+    }, CONTENT_METADATA_SUGGEST_MS);
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      setMetadataSuggestBusy(false);
+    };
+  }, [
+    productId,
+    formContent,
+    formCategory,
+    formTags,
+    creating,
+    editing,
+    entries,
+    selectedId,
+    formBusy,
+    armsEnv,
+  ]);
+
+  const listEntries = useMemo(
+    () => filterKnowledgeByQuery(entries, searchInput),
+    [entries, searchInput],
+  );
 
   const selected = useMemo(
     () => entries.find((e) => e.id === selectedId) ?? null,
@@ -267,9 +469,11 @@ export function MissionDocsPage() {
     setFormCategory('');
     setFormTags('');
     setFormError(null);
+    setMetadataSuggestError(null);
     setUploadMeta(null);
-    setCreateMode('write');
+    setCreateMode('upload');
     setDropVisual('idle');
+    contentSuggestBaselineRef.current = null;
   };
 
   const openCreate = () => {
@@ -362,12 +566,15 @@ export function MissionDocsPage() {
     setFormCategory(category);
     setFormTags(tags);
     setFormError(null);
+    setMetadataSuggestError(null);
     setEditing(true);
+    contentSuggestBaselineRef.current = selected.content;
   };
 
   const cancelEdit = () => {
     setEditing(false);
     setFormError(null);
+    setMetadataSuggestError(null);
   };
 
   const submitCreate = async () => {
@@ -462,9 +669,13 @@ export function MissionDocsPage() {
               <h1 className="ft-docs-page__title">Docs</h1>
             </div>
             <p className="ft-muted ft-docs-page__blurb">
-              Product-scoped knowledge from <code className="ft-mono">GET /api/products/…/knowledge</code> — search
-              (FTS when SQLite is configured), categories and tags via entry <code className="ft-mono">metadata</code>,
-              and full-text preview. Operator API references are linked below.
+              Product-scoped knowledge from <code className="ft-mono">GET /api/products/…/knowledge</code> — the list loads
+              newest first (limit {LIST_LIMIT}); the search box filters those rows by content and by{' '}
+              <code className="ft-mono">metadata</code> (category, type, tags). On the <strong>Write</strong> tab (or after file
+              import), pause typing for 2 seconds to
+              call <code className="ft-mono">POST …/nlp/tfidf-suggest-tags</code> — arms must allow <strong>POST</strong>{' '}
+              (Bearer or Basic <strong>admin</strong>; Basic <code className="ft-mono">read</code> returns 403). Category is
+              inferred in the browser from tag scores. Operator API references are linked below.
             </p>
           </div>
           <div className="ft-docs-page__actions">
@@ -532,7 +743,9 @@ export function MissionDocsPage() {
                 />
               </div>
               <span className="ft-muted" style={{ fontSize: '0.72rem' }}>
-                {debouncedQ.trim() ? `Results for “${debouncedQ.trim()}”` : 'Newest first'}
+                {searchInput.trim()
+                  ? `Showing ${listEntries.length} of ${entries.length} — “${searchInput.trim()}”`
+                  : 'Newest first'}
               </span>
             </div>
 
@@ -548,12 +761,14 @@ export function MissionDocsPage() {
                     </p>
                   ) : entries.length === 0 ? (
                     <p className="ft-muted" style={{ padding: '1rem', fontSize: '0.8rem', margin: 0 }}>
-                      {debouncedQ.trim()
-                        ? 'No entries match this search.'
-                        : 'No knowledge entries yet. Add one with New doc.'}
+                      No knowledge entries yet. Add one with New doc.
+                    </p>
+                  ) : listEntries.length === 0 ? (
+                    <p className="ft-muted" style={{ padding: '1rem', fontSize: '0.8rem', margin: 0 }}>
+                      No entries match this search.
                     </p>
                   ) : (
-                    entries.map((e) => {
+                    listEntries.map((e) => {
                       const chips = metaChips(e.metadata ?? {});
                       const active = e.id === selectedId && !creating;
                       return (
@@ -600,7 +815,7 @@ export function MissionDocsPage() {
                   {creating ? (
                     <div>
                       <p className="ft-muted" style={{ fontSize: '0.78rem', marginTop: 0 }}>
-                        New entry — plain text in arms knowledge; markdown is fine. Switch to Upload to import a file.
+                        New entry — drop or browse a file below, or switch to Write to type or paste content.
                       </p>
                       {formError ? (
                         <p className="ft-banner ft-banner--error" style={{ marginBottom: '0.65rem', fontSize: '0.75rem' }}>
@@ -692,12 +907,26 @@ export function MissionDocsPage() {
                             placeholder="Plan summary, newsletter draft, runbook…"
                             disabled={formBusy}
                           />
+                          {metadataSuggestBusy ? (
+                            <p className="ft-muted" style={{ fontSize: '0.72rem', margin: '0.35rem 0 0.5rem' }}>
+                              Suggesting category & tags (TF-IDF)…
+                            </p>
+                          ) : null}
+                          {metadataSuggestError ? (
+                            <p
+                              className="ft-banner ft-banner--error"
+                              style={{ marginBottom: '0.5rem', fontSize: '0.72rem', lineHeight: 1.4 }}
+                              role="status"
+                            >
+                              {metadataSuggestError}
+                            </p>
+                          ) : null}
                           <label className="ft-docs-field-label">Category (metadata)</label>
                           <input
                             className="ft-input ft-input--sm"
                             value={formCategory}
                             onChange={(e) => setFormCategory(e.target.value)}
-                            placeholder="e.g. planning, newsletter"
+                            placeholder="Auto from content after pause, or set manually"
                             disabled={formBusy}
                             style={{ width: '100%', marginBottom: '0.5rem' }}
                           />
@@ -706,7 +935,7 @@ export function MissionDocsPage() {
                             className="ft-input ft-input--sm"
                             value={formTags}
                             onChange={(e) => setFormTags(e.target.value)}
-                            placeholder="release, ops, …"
+                            placeholder="Auto after pause in content, or comma-separated"
                             disabled={formBusy}
                             style={{ width: '100%', marginBottom: '0.75rem' }}
                           />
@@ -736,6 +965,16 @@ export function MissionDocsPage() {
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
                           {!editing ? (
                             <>
+                              <button
+                                type="button"
+                                className="ft-btn-ghost"
+                                style={{ fontSize: '0.72rem' }}
+                                disabled={formBusy || knowledgeOff}
+                                onClick={() => setReadOpen(true)}
+                              >
+                                <Eye size={14} aria-hidden />
+                                Read
+                              </button>
                               <button
                                 type="button"
                                 className="ft-btn-ghost"
@@ -793,11 +1032,26 @@ export function MissionDocsPage() {
                             rows={10}
                             disabled={formBusy}
                           />
+                          {metadataSuggestBusy ? (
+                            <p className="ft-muted" style={{ fontSize: '0.72rem', margin: '0.35rem 0 0.5rem' }}>
+                              Suggesting category & tags (TF-IDF)…
+                            </p>
+                          ) : null}
+                          {metadataSuggestError ? (
+                            <p
+                              className="ft-banner ft-banner--error"
+                              style={{ marginBottom: '0.5rem', fontSize: '0.72rem', lineHeight: 1.4 }}
+                              role="status"
+                            >
+                              {metadataSuggestError}
+                            </p>
+                          ) : null}
                           <label className="ft-docs-field-label">Category</label>
                           <input
                             className="ft-input ft-input--sm"
                             value={formCategory}
                             onChange={(e) => setFormCategory(e.target.value)}
+                            placeholder="Auto from content after pause, or set manually"
                             disabled={formBusy}
                             style={{ width: '100%', marginBottom: '0.5rem' }}
                           />
@@ -806,6 +1060,7 @@ export function MissionDocsPage() {
                             className="ft-input ft-input--sm"
                             value={formTags}
                             onChange={(e) => setFormTags(e.target.value)}
+                            placeholder="Auto after pause in content, or comma-separated"
                             disabled={formBusy}
                             style={{ width: '100%', marginBottom: '0.75rem' }}
                           />
@@ -858,6 +1113,14 @@ export function MissionDocsPage() {
           </>
         )}
       </div>
+      {selected ? (
+        <MarkdownReadModal
+          open={readOpen}
+          onClose={() => setReadOpen(false)}
+          title={`Entry #${selected.id}`}
+          content={selected.content}
+        />
+      ) : null}
     </div>
   );
 }

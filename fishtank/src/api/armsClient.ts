@@ -6,8 +6,18 @@ import type {
   ApiProduct,
   ApiProductDetail,
   ApiTask,
+  ApiTfidfSuggestTagsResponse,
   ApiVersion,
 } from './armsTypes';
+
+/** Body for `POST /api/products/{id}/nlp/tfidf-suggest-tags`. */
+export type ProductTfidfSuggestBody = {
+  text: string;
+  idea_id?: string;
+  extra_corpus?: string[];
+  top_k?: number;
+  min_token_len?: number;
+};
 
 export class ArmsHttpError extends Error {
   constructor(
@@ -217,6 +227,17 @@ export class ArmsClient {
     throw new ArmsHttpError(err.message, res.status, err.code);
   }
 
+  /** TF-IDF tag suggestions; corpus = product ideas + optional `extra_corpus` (e.g. other knowledge rows). */
+  async suggestProductTfidfTags(
+    productId: string,
+    body: ProductTfidfSuggestBody,
+  ): Promise<ApiTfidfSuggestTagsResponse> {
+    return this.postJson<ApiTfidfSuggestTagsResponse>(
+      `/api/products/${encodeURIComponent(productId)}/nlp/tfidf-suggest-tags`,
+      body,
+    );
+  }
+
   private headers(): HeadersInit {
     const h: Record<string, string> = { Accept: 'application/json' };
     if (this.env.token) {
@@ -234,7 +255,13 @@ export class ArmsClient {
       (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    return fetch(joinUrl(this.env.baseUrl, path), init);
+    const url = joinUrl(this.env.baseUrl, path);
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new ArmsHttpError(msg, 0, 'network');
+    }
   }
 
   private async getJson<T>(path: string): Promise<T> {
@@ -243,7 +270,11 @@ export class ArmsClient {
       const err = await readErrorBody(res);
       throw new ArmsHttpError(err.message, res.status, err.code);
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new ArmsHttpError('Response was not valid JSON', res.status, 'invalid_json');
+    }
   }
 
   private async postJson<T>(path: string, body: unknown): Promise<T> {
@@ -252,7 +283,11 @@ export class ArmsClient {
       const err = await readErrorBody(res);
       throw new ArmsHttpError(err.message, res.status, err.code);
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new ArmsHttpError('Response was not valid JSON', res.status, 'invalid_json');
+    }
   }
 
   private async patchJson<T>(path: string, body: unknown): Promise<T> {
@@ -261,8 +296,24 @@ export class ArmsClient {
       const err = await readErrorBody(res);
       throw new ArmsHttpError(err.message, res.status, err.code);
     }
-    return (await res.json()) as T;
+    try {
+      return (await res.json()) as T;
+    } catch {
+      throw new ArmsHttpError('Response was not valid JSON', res.status, 'invalid_json');
+    }
   }
+}
+
+/**
+ * TF-IDF suggestions with a freshly constructed client. Prefer this from React UI that may keep a
+ * stale `ArmsClient` in context after Bun/Vite HMR (old instance can miss methods added later).
+ */
+export async function fetchProductTfidfSuggestTags(
+  env: ArmsEnv,
+  productId: string,
+  body: ProductTfidfSuggestBody,
+): Promise<ApiTfidfSuggestTagsResponse> {
+  return new ArmsClient(env).suggestProductTfidfTags(productId, body);
 }
 
 async function readErrorBody(res: Response): Promise<{ message: string; code?: string }> {

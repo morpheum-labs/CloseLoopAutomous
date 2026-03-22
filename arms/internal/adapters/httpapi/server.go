@@ -26,6 +26,7 @@ func NewRouter(cfg Config, h *Handlers) http.Handler {
 	sub.Handle("POST /api/products/{id}/research", http.HandlerFunc(h.runResearch))
 	sub.Handle("POST /api/products/{id}/ideation", http.HandlerFunc(h.runIdeation))
 	sub.Handle("GET /api/products/{id}/ideas", http.HandlerFunc(h.listIdeas))
+	sub.Handle("POST /api/products/{id}/nlp/tfidf-suggest-tags", http.HandlerFunc(h.postProductTfidfSuggestTags))
 	sub.Handle("GET /api/products/{id}/maybe-pool", http.HandlerFunc(h.listMaybePool))
 	sub.Handle("POST /api/products/{id}/maybe-pool/batch-reeval", http.HandlerFunc(h.maybePoolBatchReeval))
 	sub.Handle("POST /api/products/{id}/feedback", http.HandlerFunc(h.postProductFeedback))
@@ -108,6 +109,7 @@ func NewRouter(cfg Config, h *Handlers) http.Handler {
 	sub.Handle("GET /api/workspaces", http.HandlerFunc(h.workspacesView))
 	sub.Handle("GET /api/operations-log", http.HandlerFunc(h.listOperationsLog))
 	sub.Handle("GET /api/settings", http.HandlerFunc(h.settingsStub))
+	sub.Handle("POST /api/nlp/tfidf-suggest-tags", http.HandlerFunc(h.postTfidfSuggestTags))
 
 	mux.Handle("/", AuthMiddleware(cfg, sub))
 

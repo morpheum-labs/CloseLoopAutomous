@@ -27,6 +27,8 @@ export type MissionControlHeaderExtras = {
   agentsPaused: boolean;
   onAgentsPausedToggle: () => void;
   workspaceStats: MissionControlWorkspaceStats;
+  liveActivityPanelOpen: boolean;
+  onLiveActivityPanelToggle: () => void;
 };
 
 type Props = {
@@ -118,7 +120,22 @@ export function WorkspaceHeaderBar({ missionControl = null }: Props) {
 
         <div className="ft-header-mc-right">
           <BackendConnectionPill isOnline={isOnline} className="ft-hide-below-lg" />
-          <button type="button" className="ft-btn-icon" title="Notifications (demo)" aria-label="Notifications">
+          <button
+            type="button"
+            className="ft-btn-icon"
+            title={
+              missionControl.liveActivityPanelOpen
+                ? 'Hide Live Activity panel'
+                : 'Show Live Activity panel'
+            }
+            aria-label={
+              missionControl.liveActivityPanelOpen
+                ? 'Hide Live Activity panel'
+                : 'Show Live Activity panel'
+            }
+            aria-pressed={missionControl.liveActivityPanelOpen}
+            onClick={() => missionControl.onLiveActivityPanelToggle()}
+          >
             <Bell size={18} />
           </button>
           <button

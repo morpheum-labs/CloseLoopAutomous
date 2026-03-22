@@ -153,6 +153,7 @@ In **`arms`**, a **product** is the natural stand-in for a **project** (workspac
 
 ## [G] Module: Docs (reference §2 Docs)
 
+- [x] **TF-IDF metadata loop (Mission Docs)** — `MissionDocsPage`: after **2s idle** on the content textarea (create/write or edit), `POST /api/products/{id}/nlp/tfidf-suggest-tags` with **`extra_corpus`** from sibling knowledge rows; fills **tags** from the response and **category** via client-side keyword scoring over returned tokens (see [api-ref.md](api-ref.md) NLP note).
 - [ ] **Knowledge as docs** — `GET/POST/PATCH/DELETE …/knowledge`: list with **category**, **type/tags**, search, readable **preview** (reference §2 Docs).
 - [ ] **OpenAPI / operator docs link** — in About or Docs area: `docs/openapi/arms-openapi.yaml` or hosted Swagger.
 

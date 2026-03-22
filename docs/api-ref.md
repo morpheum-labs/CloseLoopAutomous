@@ -69,6 +69,17 @@ Common `code` values from domain mapping include `not_found`, `invalid_transitio
 | POST | `/api/ideas/{id}/swipe` | `decision`: `pass` \| `maybe` \| `yes` \| `now` | Appends to `preference_model_json`; `maybe` enqueues pool. Sets MC **`status`** + **`swiped_at`**. |
 | POST | `/api/ideas/{id}/promote-maybe` | — | Requires prior `maybe` swipe; sets decision to yes and removes from pool. |
 
+### NLP — TF-IDF tag suggestions (no LLM)
+
+Uses [github.com/go-nlp/tfidf](https://github.com/go-nlp/tfidf): English stopwords stripped, letter/digit tokens only. **`method`**: `tfidf` when at least one corpus document is used; **`frequency`** when the corpus is empty (stateless) or there are no sibling idea texts (product route).
+
+| Method | Path | Body (JSON) | Notes |
+|--------|------|-------------|--------|
+| POST | `/api/nlp/tfidf-suggest-tags` | **`text`**; optional **`corpus`** (string array), **`top_k`** (default 12, max 64), **`min_token_len`** (default 2) | **200** `{ "tags": [ { "token", "score" } ], "method", "corpus_documents" }`. **400** if `text` missing. |
+| POST | `/api/products/{id}/nlp/tfidf-suggest-tags` | **`text`** or **`idea_id`**; optional **`extra_corpus`**, **`top_k`**, **`min_token_len`** | Corpus = other ideas’ title + description + reasoning + tags (excluding `idea_id` when set), plus `extra_corpus`. **200** adds **`product_id`**, **`idea_id`** (echo). **400** if idea not on product; **404** if product/idea missing. |
+
+**Fishtank Docs (`MissionDocsPage`):** sends the draft body as **`text`** and passes trimmed slices of **other** knowledge entries (same product) in **`extra_corpus`** so TF-IDF sees doc-to-doc context in addition to ideas. **Tags** in the form come from the API **`tags`** list; **category** (knowledge `metadata.category`) is chosen in the **browser** by scoring those tokens against a small keyword→label map (not returned by arms). These routes are **POST**: HTTP Basic users with role **`read`** can `GET` knowledge but get **403** on NLP suggest — use **Bearer** or Basic **admin**.
+
 ---
 
 ## Tasks (Kanban)

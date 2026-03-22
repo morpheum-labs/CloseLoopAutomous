@@ -22,6 +22,7 @@ export function WorkspaceShellLayout() {
   const [assigneeAgentId, setAssigneeAgentId] = useState<string | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [agentsPaused, setAgentsPaused] = useState(false);
+  const [liveActivityPanelOpen, setLiveActivityPanelOpen] = useState(true);
 
   const stats = useMemo(() => {
     if (!activeWorkspace) {
@@ -63,6 +64,8 @@ export function WorkspaceShellLayout() {
           agentsPaused,
           onAgentsPausedToggle: () => setAgentsPaused((p) => !p),
           workspaceStats: stats,
+          liveActivityPanelOpen,
+          onLiveActivityPanelToggle: () => setLiveActivityPanelOpen((o) => !o),
         }}
       />
       {apiError ? (
@@ -142,7 +145,7 @@ export function WorkspaceShellLayout() {
         </div>
 
         <div className="ft-desktop-only ft-mc-feed-slot">
-          {hideDesktopFeedColumn ? null : <LiveFeedPanel variant="activity" />}
+          {hideDesktopFeedColumn || !liveActivityPanelOpen ? null : <LiveFeedPanel variant="activity" />}
         </div>
       </div>
     </div>

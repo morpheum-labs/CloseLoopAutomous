@@ -30,6 +30,7 @@ tags:
   - name: Webhooks
   - name: Live
   - name: Ops
+  - name: NLP
 
 components:
   securitySchemes:
@@ -79,6 +80,26 @@ components:
       properties:
         error: { type: string }
         code: { type: string }
+
+    TfidfTagScore:
+      type: object
+      properties:
+        token: { type: string }
+        score: { type: number, format: double }
+
+    TfidfSuggestTagsResponse:
+      type: object
+      properties:
+        tags:
+          type: array
+          items: { $ref: "#/components/schemas/TfidfTagScore" }
+        method:
+          type: string
+          enum: [tfidf, frequency]
+          description: frequency when no usable corpus documents were provided
+        corpus_documents: { type: integer }
+        product_id: { type: string, description: Present for product-scoped route only }
+        idea_id: { type: string, description: Echo when idea_id was sent on product route }
 
     PreferenceModelResponse:
       type: object
@@ -874,6 +895,79 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IdeasListResponse" }
+
+  /api/nlp/tfidf-suggest-tags:
+    post:
+      tags: [NLP]
+      summary: Stateless TF-IDF tag suggestions (no LLM)
+      description: |
+        Ranks tokens in `text` using TF-IDF against `corpus` strings. Empty corpus falls back to term frequency in `text`.
+        English stopwords are removed; alphanumeric tokens only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                corpus:
+                  type: array
+                  items: { type: string }
+                top_k: { type: integer, default: 12, maximum: 64 }
+                min_token_len: { type: integer, default: 2 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TfidfSuggestTagsResponse" }
+        "400":
+          description: Missing text or invalid JSON
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/products/{id}/nlp/tfidf-suggest-tags:
+    post:
+      tags: [NLP]
+      summary: TF-IDF tag suggestions using sibling ideas as corpus
+      description: |
+        Builds the corpus from other ideas on the product (title, description, reasoning, tags). With `idea_id`, the target is that idea and it is excluded from the corpus.
+        Optional `extra_corpus` strings are appended. Requires `text` or `idea_id`.
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, description: Required unless idea_id is set }
+                idea_id: { type: string }
+                extra_corpus:
+                  type: array
+                  items: { type: string }
+                top_k: { type: integer, default: 12, maximum: 64 }
+                min_token_len: { type: integer, default: 2 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TfidfSuggestTagsResponse" }
+        "400":
+          description: Bad input (missing text/idea_id, idea on wrong product)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Product or idea not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/products/{id}/maybe-pool:
     get:

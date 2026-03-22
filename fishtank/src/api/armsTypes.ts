@@ -91,3 +91,14 @@ export type ApiKnowledgeEntry = {
   task_id?: string;
   metadata: Record<string, unknown>;
 };
+
+/** `POST /api/products/{id}/nlp/tfidf-suggest-tags` — tag salience; category for Docs is inferred in the client. */
+export type ApiTfidfTagScore = { token: string; score: number };
+
+export type ApiTfidfSuggestTagsResponse = {
+  tags: ApiTfidfTagScore[];
+  method: string;
+  corpus_documents: number;
+  product_id?: string;
+  idea_id?: string;
+};
