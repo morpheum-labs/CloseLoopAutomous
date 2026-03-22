@@ -58,7 +58,8 @@ export function NewTaskModal({ open, onClose, onCreate }: Props) {
         </div>
         <form onSubmit={(e) => void handleSubmit(e)} className="ft-modal-body">
           <p className="ft-muted" style={{ margin: 0, fontSize: '0.8rem', lineHeight: 1.5 }}>
-            Creates <code className="ft-mono">POST /api/tasks</code> — the idea must already be approved in arms.
+            Creates <code className="ft-mono">POST /api/tasks</code> with <code className="ft-mono">idea_id</code> from the ideas list JSON field{' '}
+            <code className="ft-mono">id</code> (not <code className="ft-mono">task_id</code>). The idea must be approved (swipe yes/now).
           </p>
           {formError ? (
             <p className="ft-banner ft-banner--error" role="alert">
@@ -72,7 +73,7 @@ export function NewTaskModal({ open, onClose, onCreate }: Props) {
               value={ideaId}
               onChange={(e) => setIdeaId(e.target.value)}
               disabled={submitting}
-              placeholder="uuid from GET …/ideas"
+              placeholder='e.g. idea-3 from GET …/products/{id}/ideas → "id"'
               autoFocus
             />
           </label>

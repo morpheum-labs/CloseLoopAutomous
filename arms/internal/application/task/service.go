@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -61,12 +62,21 @@ func (s *Service) TaskByIDForAPI(ctx context.Context, id domain.TaskID) (*domain
 func (s *Service) CreateFromApprovedIdea(ctx context.Context, ideaID domain.IdeaID, spec string) (*domain.Task, error) {
 	idea, err := s.Ideas.ByID(ctx, ideaID)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf(
+				`%w: no idea with id %q — use GET /api/products/{product_id}/ideas and send JSON field "id" as idea_id (not "task_id" or product id)`,
+				domain.ErrNotFound, ideaID,
+			)
+		}
 		return nil, err
 	}
 	if !idea.Decided || !idea.Decision.Approved() {
 		return nil, fmt.Errorf("%w: idea not approved", domain.ErrInvalidTransition)
 	}
 	if err := ports.RequireActiveProduct(ctx, s.Products, idea.ProductID); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("%w: product %q for this idea is missing or soft-deleted", domain.ErrNotFound, idea.ProductID)
+		}
 		return nil, err
 	}
 	now := s.Clock.Now()
