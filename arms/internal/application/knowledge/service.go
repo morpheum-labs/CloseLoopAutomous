@@ -17,6 +17,8 @@ type Service struct {
 	Clock    ports.Clock
 	// DispatchSnippetLimit caps snippets appended per dispatch (default 5 in wiring).
 	DispatchSnippetLimit int
+	// UseFTSQuerySyntax when true passes SanitizeFTS5Query(q) to Search/List paths that need FTS (SQLite). When false, raw trimmed text is used (chromem, memory).
+	UseFTSQuerySyntax bool
 }
 
 // Get returns one entry scoped to product.
@@ -137,13 +139,18 @@ func (s *Service) MarkdownBlockForDispatch(ctx context.Context, productID domain
 	if limit <= 0 {
 		limit = 5
 	}
-	fts := SanitizeFTS5Query(rawQuery)
+	var query string
+	if s.UseFTSQuerySyntax {
+		query = SanitizeFTS5Query(rawQuery)
+	} else {
+		query = strings.TrimSpace(rawQuery)
+	}
 	var rows []domain.KnowledgeEntry
 	var err error
-	if fts == "" {
+	if query == "" {
 		rows, err = s.Repo.ListByProduct(ctx, productID, limit)
 	} else {
-		rows, err = s.Repo.Search(ctx, productID, fts, limit)
+		rows, err = s.Repo.Search(ctx, productID, query, limit)
 	}
 	if err != nil || len(rows) == 0 {
 		return "", err

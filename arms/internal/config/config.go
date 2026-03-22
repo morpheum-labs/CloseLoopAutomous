@@ -42,6 +42,14 @@ import (
 //   - ARMS_AUTO_STALL_NUDGE_MAX_PER_DAY — max auto-nudges per task per rolling 24h (default 6); 0 disables the cap
 //   - ARMS_KNOWLEDGE_DISPATCH_SNIPPETS — max knowledge bullets appended per OpenClaw dispatch (default 5)
 //   - ARMS_KNOWLEDGE_DISABLE_DISPATCH — "1" or "true" to keep knowledge HTTP/CRUD but skip dispatch-time injection
+//   - ARMS_KNOWLEDGE_BACKEND — fts5 (default, SQLite FTS5) or chromem (semantic search via chromem-go; requires embedder)
+//   - ARMS_CHROMEM_PERSISTENCE_PATH — directory for chromem persistent DB (default ./data/chromem-knowledge)
+//   - ARMS_CHROMEM_COMPRESS — "1" or "true" to gzip chromem document blobs on disk
+//   - ARMS_CHROMEM_EMBEDDER — ollama (default) or openai (OpenAI-compatible embeddings API)
+//   - ARMS_CHROMEM_EMBEDDER_MODEL — Ollama embedding model (default nomic-embed-text)
+//   - ARMS_CHROMEM_OLLAMA_BASE_URL — Ollama API base (default http://localhost:11434/api)
+//   - ARMS_CHROMEM_OPENAI_API_KEY — OpenAI key (falls back to OPENAI_API_KEY)
+//   - ARMS_CHROMEM_OPENAI_MODEL — embedding model id (default text-embedding-3-small)
 //   - ARMS_CORS_ALLOW_ORIGIN — optional; when non-empty, enables CORS for browser UIs on another origin (e.g. http://localhost:3000 for Fishtank). Use * only for quick local experiments.
 //   - ARMS_ACL — optional HTTP Basic ACL: semicolon-separated entries "user|password|role". Role is admin (default) or read (GET/HEAD only). Non-empty enables auth when MC_API_TOKEN is empty, or adds Basic as an alternative when both are set. User/password must not contain '|' or ';'.
 //   - ARMS_MERGE_BACKEND — merge queue completion: noop (default), github (REST merge PR), local (git merge in repo_clone_path)
@@ -88,6 +96,14 @@ type Config struct {
 	AutoStallNudgeMaxPerDay     int
 	KnowledgeDispatchSnippetLimit     int
 	KnowledgeDisableDispatchInjection bool
+	KnowledgeBackend                  string
+	ChromemPersistencePath          string
+	ChromemCompress                   bool
+	ChromemEmbedder                   string
+	ChromemEmbedderModel              string
+	ChromemOllamaBaseURL              string
+	ChromemOpenAIAPIKey               string
+	ChromemOpenAIModel                string
 }
 
 // ACLUser is one Basic-auth principal for coarse HTTP ACL (admin vs read-only).
@@ -199,6 +215,24 @@ func LoadFromEnv() Config {
 	}
 	knowDisableInject := strings.EqualFold(os.Getenv("ARMS_KNOWLEDGE_DISABLE_DISPATCH"), "1") ||
 		strings.EqualFold(os.Getenv("ARMS_KNOWLEDGE_DISABLE_DISPATCH"), "true")
+	knowBackend := strings.ToLower(strings.TrimSpace(os.Getenv("ARMS_KNOWLEDGE_BACKEND")))
+	if knowBackend == "" {
+		knowBackend = "fts5"
+	}
+	chromemPath := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_PERSISTENCE_PATH"))
+	if chromemPath == "" {
+		chromemPath = "./data/chromem-knowledge"
+	}
+	chromemCompress := strings.EqualFold(os.Getenv("ARMS_CHROMEM_COMPRESS"), "1") ||
+		strings.EqualFold(os.Getenv("ARMS_CHROMEM_COMPRESS"), "true")
+	chromemEmbedder := strings.ToLower(strings.TrimSpace(os.Getenv("ARMS_CHROMEM_EMBEDDER")))
+	if chromemEmbedder == "" {
+		chromemEmbedder = "ollama"
+	}
+	chromemModel := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_EMBEDDER_MODEL"))
+	chromemOllamaBase := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_OLLAMA_BASE_URL"))
+	chromemOpenAIKey := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_OPENAI_API_KEY"))
+	chromemOpenAIModel := strings.TrimSpace(os.Getenv("ARMS_CHROMEM_OPENAI_MODEL"))
 	return Config{
 		ListenAddr:                  addr,
 		MCAPIToken:                  strings.TrimSpace(token),
@@ -238,6 +272,14 @@ func LoadFromEnv() Config {
 		AutoStallNudgeMaxPerDay:     autoStallMaxDay,
 		KnowledgeDispatchSnippetLimit:     knowSnippets,
 		KnowledgeDisableDispatchInjection: knowDisableInject,
+		KnowledgeBackend:                  knowBackend,
+		ChromemPersistencePath:            chromemPath,
+		ChromemCompress:                   chromemCompress,
+		ChromemEmbedder:                   chromemEmbedder,
+		ChromemEmbedderModel:              chromemModel,
+		ChromemOllamaBaseURL:              chromemOllamaBase,
+		ChromemOpenAIAPIKey:               chromemOpenAIKey,
+		ChromemOpenAIModel:                chromemOpenAIModel,
 	}
 }
 

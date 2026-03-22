@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -83,7 +84,10 @@ func NewInMemoryApp(cfg config.Config, b Build) *App {
 	productFb := memory.NewProductFeedbackStore()
 	taskChat := memory.NewTaskChatStore()
 	knowledge := memory.NewKnowledgeStore()
-	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, hub, hub, nil, b)
+	if strings.EqualFold(strings.TrimSpace(cfg.KnowledgeBackend), "chromem") {
+		slog.Default().Warn("ARMS_KNOWLEDGE_BACKEND=chromem is ignored when DATABASE_PATH is empty (in-memory mode); using in-memory knowledge store")
+	}
+	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, false, hub, hub, nil, b)
 	return &App{Handlers: h, Products: products, Ideas: ideas, Tasks: tasks, ProductSchedules: sched, db: nil, cleanup: cleanup}
 }
 
@@ -111,6 +115,7 @@ func buildHandlers(
 	productFeedback ports.ProductFeedbackRepository,
 	taskChat ports.TaskChatRepository,
 	knowledge ports.KnowledgeRepository,
+	knowledgeUseFTSQuerySyntax bool,
 	hub *livefeed.Hub,
 	taskEvents ports.LiveActivityPublisher,
 	liveTX ports.LiveActivityTX,
@@ -123,6 +128,7 @@ func buildHandlers(
 		Repo:                 knowledge,
 		Clock:                clock,
 		DispatchSnippetLimit: cfg.KnowledgeDispatchSnippetLimit,
+		UseFTSQuerySyntax:    knowledgeUseFTSQuerySyntax,
 	}
 	var knowHook func(context.Context, domain.ProductID, string) (string, error)
 	if !cfg.KnowledgeDisableDispatchInjection {
