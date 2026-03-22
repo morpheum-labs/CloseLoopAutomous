@@ -63,9 +63,13 @@ func (s *Service) CreateFromApprovedIdea(ctx context.Context, ideaID domain.Idea
 	idea, err := s.Ideas.ByID(ctx, ideaID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
+			extra := ""
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(string(ideaID))), "initial-") {
+				extra = ` On this server, new ideas get ids "idea-1", "idea-2", … (see GET …/ideas → "id"). There is no "initial-*" prefix unless you inserted that row yourself.`
+			}
 			return nil, fmt.Errorf(
-				`%w: no idea with id %q — use GET /api/products/{product_id}/ideas and send JSON field "id" as idea_id (not "task_id" or product id)`,
-				domain.ErrNotFound, ideaID,
+				`%w: no idea with id %q — use GET /api/products/{product_id}/ideas and send JSON field "id" as idea_id (not "task_id" or product id).%s`,
+				domain.ErrNotFound, ideaID, extra,
 			)
 		}
 		return nil, err
