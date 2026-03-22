@@ -6,6 +6,8 @@
 ARMS_DIR := arms
 BINARY   := $(ARMS_DIR)/bin/arms
 MAIN     := ./cmd/arms
+# Default config for `make run` (override: make run CONFIG=config/arms.local.toml)
+CONFIG   ?= config/arms.toml
 PKG      := github.com/closeloopautomous/arms/cmd/arms
 VERSION  := $(shell git -C $(ARMS_DIR)/.. describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT   := $(shell git -C $(ARMS_DIR)/.. rev-parse --short HEAD 2>/dev/null || echo "")
@@ -37,8 +39,10 @@ install: build
 	@mkdir -p $(GOBIN)
 	cp $(BINARY) $(GOBIN)/arms
 
+# Run from repo root so paths in CONFIG (e.g. ./data/arms.db) match config/arms.toml
 run: build
-	cd $(ARMS_DIR) && GOWORK=off ./bin/arms
+	@mkdir -p data
+	GOWORK=off $(BINARY) -c $(CONFIG)
 
 # Build gzipped binaries for all TARGETS into ./arms/bin
 # Output naming:

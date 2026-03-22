@@ -1,4 +1,4 @@
-import { AlertTriangle, ChevronRight, Plus } from 'lucide-react';
+import { AlertTriangle, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { ArmsHttpError } from '../../api/armsClient';
 import { useMissionUi } from '../../context/MissionUiContext';
@@ -9,10 +9,33 @@ import { TaskCard } from './TaskCard';
 import { NewTaskModal } from './NewTaskModal';
 import { TaskDetailModal } from './TaskDetailModal';
 
-export function MissionQueuePanel() {
+function kanbanColumnMcClass(id: TaskStatus): string {
+  if (id === 'planning' || id === 'inbox' || id === 'assigned') return 'ft-kanban-col--mc-backlog';
+  if (id === 'in_progress' || id === 'testing' || id === 'convoy_active') return 'ft-kanban-col--mc-active';
+  if (id === 'review' || id === 'failed') return 'ft-kanban-col--mc-review';
+  if (id === 'done') return 'ft-kanban-col--mc-done';
+  return '';
+}
+
+type MissionQueuePanelProps = {
+  boardSearch?: string;
+  assigneeAgentId?: string | null;
+  onAssigneeAgentIdChange?: (id: string | null) => void;
+  newTaskOpen: boolean;
+  onNewTaskOpenChange: (open: boolean) => void;
+};
+
+export function MissionQueuePanel({
+  boardSearch = '',
+  assigneeAgentId = null,
+  onAssigneeAgentIdChange,
+  newTaskOpen,
+  onNewTaskOpenChange,
+}: MissionQueuePanelProps) {
   const {
     activeWorkspace,
     tasks,
+    agents,
     boardLoading,
     boardLoadFailed,
     patchTaskStatus,
@@ -20,7 +43,6 @@ export function MissionQueuePanel() {
     stalledTasks,
     apiError,
   } = useMissionUi();
-  const [newOpen, setNewOpen] = useState(false);
   const [selected, setSelected] = useState<Task | null>(null);
   const [dropOver, setDropOver] = useState<TaskStatus | null>(null);
   const [dndError, setDndError] = useState<string | null>(null);
@@ -29,6 +51,25 @@ export function MissionQueuePanel() {
     if (!activeWorkspace) return [];
     return tasks.filter((t) => t.workspaceId === activeWorkspace.id);
   }, [tasks, activeWorkspace]);
+
+  const scopedAgents = useMemo(() => {
+    if (!activeWorkspace) return [];
+    return agents.filter((a) => a.workspaceId === activeWorkspace.id);
+  }, [agents, activeWorkspace]);
+
+  const filtered = useMemo(() => {
+    let list = scoped;
+    const q = boardSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (t) => t.title.toLowerCase().includes(q) || t.spec.toLowerCase().includes(q) || t.ideaId.toLowerCase().includes(q),
+      );
+    }
+    if (assigneeAgentId) {
+      list = list.filter((t) => t.currentExecutionAgentId === assigneeAgentId);
+    }
+    return list;
+  }, [scoped, boardSearch, assigneeAgentId]);
 
   const stalledIds = useMemo(() => new Set(stalledTasks.map((s) => s.taskId)), [stalledTasks]);
 
@@ -55,16 +96,46 @@ export function MissionQueuePanel() {
   }
 
   return (
-    <section className="ft-queue-flex ft-queue-relative">
-      <div className="ft-border-b" style={{ padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <ChevronRight size={16} className="ft-muted" />
-          <span className="ft-upper-label">Mission Queue</span>
-        </div>
-        <button type="button" className="ft-btn-accent-pink" onClick={() => setNewOpen(true)} disabled={!activeWorkspace}>
-          <Plus size={16} />
-          New Task
+    <section className="ft-queue-flex ft-queue-relative ft-mc-main">
+      <div className="ft-mc-filter-bar ft-border-b">
+        <button
+          type="button"
+          className="ft-btn-primary ft-mc-new-task-main"
+          onClick={() => onNewTaskOpenChange(true)}
+          disabled={!activeWorkspace}
+        >
+          <Plus size={18} aria-hidden />
+          New task
         </button>
+        <div className="ft-mc-filter-chips" role="group" aria-label="Filter by assignee">
+          <button
+            type="button"
+            className={`ft-mc-assignee-chip ${assigneeAgentId == null ? 'ft-mc-assignee-chip--on' : ''}`}
+            onClick={() => onAssigneeAgentIdChange?.(null)}
+          >
+            All
+          </button>
+          {scopedAgents.slice(0, 6).map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className={`ft-mc-assignee-chip ${assigneeAgentId === a.id ? 'ft-mc-assignee-chip--on' : ''}`}
+              onClick={() => onAssigneeAgentIdChange?.(a.id)}
+              title={a.name}
+            >
+              <span className="ft-mc-assignee-avatar" aria-hidden>
+                {initialsFromName(a.name)}
+              </span>
+              <span className="ft-mc-assignee-name">{firstName(a.name)}</span>
+            </button>
+          ))}
+        </div>
+        <label className="ft-mc-project-select-wrap">
+          <span className="ft-sr-only">Project filter</span>
+          <select className="ft-mc-project-select" disabled aria-disabled="true" defaultValue="all" title="Single workspace — all projects">
+            <option value="all">All projects</option>
+          </select>
+        </label>
       </div>
 
       {dndError ? (
@@ -106,14 +177,19 @@ export function MissionQueuePanel() {
         ) : null}
         {!boardLoading && !boardLoadFailed && scoped.length === 0 ? (
           <div className="ft-muted" style={{ padding: '2rem 1rem', textAlign: 'center', fontSize: '0.875rem' }}>
-            No tasks in this product yet. Create one with <strong>New Task</strong> (requires an approved idea id).
+            No tasks in this product yet. Create one with <strong>New task</strong> (requires an approved idea id).
+          </div>
+        ) : null}
+        {!boardLoading && !boardLoadFailed && scoped.length > 0 && filtered.length === 0 ? (
+          <div className="ft-muted ft-mc-filter-empty" role="status">
+            No tasks match the current search or assignee filter.
           </div>
         ) : null}
         {!boardLoadFailed &&
           KANBAN_COLUMNS.map((col) => {
-          const colTasks = tasksForStatus(scoped, col.id);
+          const colTasks = tasksForStatus(filtered, col.id);
           return (
-            <div key={col.id} className={`ft-kanban-col ${col.columnClass}`}>
+            <div key={col.id} className={`ft-kanban-col ${col.columnClass} ${kanbanColumnMcClass(col.id)}`}>
               <div className="ft-kanban-col-header">
                 {col.label} · {colTasks.length}
               </div>
@@ -145,7 +221,7 @@ export function MissionQueuePanel() {
                         stalled
                       </span>
                     ) : null}
-                    <TaskCard task={t} onOpen={() => setSelected(t)} />
+                    <TaskCard task={t} agents={scopedAgents} onOpen={() => setSelected(t)} />
                   </div>
                 ))}
               </div>
@@ -154,8 +230,24 @@ export function MissionQueuePanel() {
         })}
       </div>
 
-      <NewTaskModal open={newOpen} onClose={() => setNewOpen(false)} onCreate={(ideaId, spec) => createTaskForProduct(ideaId, spec)} />
+      <NewTaskModal
+        open={newTaskOpen}
+        onClose={() => onNewTaskOpenChange(false)}
+        onCreate={(ideaId, spec) => createTaskForProduct(ideaId, spec)}
+      />
       <TaskDetailModal task={selected} onClose={() => setSelected(null)} />
     </section>
   );
+}
+
+function firstName(name: string): string {
+  const part = name.trim().split(/\s+/)[0];
+  return part || name;
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }

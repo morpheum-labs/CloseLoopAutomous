@@ -20,7 +20,7 @@ function viteEnv(): ImportMetaEnv {
 
 export function readArmsEnv(): ArmsEnv {
   const e = viteEnv();
-  const baseUrl = trimBase(e.VITE_ARMS_URL?.trim() || 'http://127.0.0.1:8080');
+  const baseUrl = trimBase(e.VITE_ARMS_URL?.trim() || 'http://localhost:8080');
   const token = e.VITE_ARMS_TOKEN?.trim() || '';
   const basicUser = e.VITE_ARMS_BASIC_USER?.trim() || '';
   const basicPassword = e.VITE_ARMS_BASIC_PASSWORD?.trim() || '';

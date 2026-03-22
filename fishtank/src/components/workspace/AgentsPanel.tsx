@@ -3,7 +3,9 @@ import { useMemo, useState } from 'react';
 import { useMissionUi } from '../../context/MissionUiContext';
 import type { Agent } from '../../domain/types';
 
-export function AgentsPanel() {
+type AgentsPanelProps = { embedded?: boolean };
+
+export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
   const { activeWorkspace, agents } = useMissionUi();
   const [query, setQuery] = useState('');
 
@@ -15,14 +17,20 @@ export function AgentsPanel() {
     return scoped.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q));
   }, [agents, activeWorkspace, query]);
 
+  const shellClass = embedded ? 'ft-mc-agents-embed' : 'ft-sidebar';
+
   return (
-    <aside className="ft-sidebar">
-      <div className="ft-border-b" style={{ padding: '0.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <ChevronRight size={16} className="ft-muted" />
+    <aside className={shellClass}>
+      <div className={embedded ? 'ft-mc-agents-embed-head' : 'ft-border-b'} style={{ padding: embedded ? '0.5rem 0.75rem' : '0.75rem' }}>
+        {!embedded ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <ChevronRight size={16} className="ft-muted" />
+            <span className="ft-upper-label">Agents</span>
+          </div>
+        ) : (
           <span className="ft-upper-label">Agents</span>
-        </div>
-        <div style={{ marginTop: '0.65rem', position: 'relative' }}>
+        )}
+        <div style={{ marginTop: embedded ? '0.5rem' : '0.65rem', position: 'relative' }}>
           <Search
             size={16}
             className="ft-muted"
@@ -32,13 +40,13 @@ export function AgentsPanel() {
             className="ft-input ft-input--sm ft-input--leading-icon"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by task or status"
+            placeholder="Filter agents"
             aria-label="Search agents"
             style={{ width: '100%' }}
           />
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem', minHeight: 0 }}>
         {list.length === 0 ? (
           <p className="ft-muted" style={{ fontSize: '0.75rem', padding: '0.5rem' }}>
             No agent heartbeats for this product (or agent health is disabled on the server).

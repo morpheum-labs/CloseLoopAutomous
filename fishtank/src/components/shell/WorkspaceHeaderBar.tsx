@@ -1,13 +1,39 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, ChevronLeft, LayoutGrid, Rocket, Settings, Zap } from 'lucide-react';
+import {
+  Activity,
+  Bell,
+  ChevronLeft,
+  LayoutGrid,
+  Pause,
+  Play,
+  RefreshCw,
+  Rocket,
+  Search,
+  Settings,
+} from 'lucide-react';
 import { useMissionUi } from '../../context/MissionUiContext';
 import { BackendConnectionPill } from './BackendConnectionPill';
 import { ThemeCycleButton } from './ThemeCycleButton';
 import { AboutModal } from './AboutModal';
+import { MissionControlOverviewModal, type MissionControlWorkspaceStats } from './MissionControlOverviewModal';
 import { formatClock } from '../../lib/time';
 
-export function WorkspaceHeaderBar() {
+export type { MissionControlWorkspaceStats };
+
+export type MissionControlHeaderExtras = {
+  boardSearch: string;
+  onBoardSearchChange: (v: string) => void;
+  agentsPaused: boolean;
+  onAgentsPausedToggle: () => void;
+  workspaceStats: MissionControlWorkspaceStats;
+};
+
+type Props = {
+  missionControl?: MissionControlHeaderExtras | null;
+};
+
+export function WorkspaceHeaderBar({ missionControl = null }: Props) {
   const navigate = useNavigate();
   const {
     activeWorkspace,
@@ -18,9 +44,11 @@ export function WorkspaceHeaderBar() {
     agents,
     fetchVersion,
     armsEnv,
+    refreshActiveBoard,
   } = useMissionUi();
   const [now, setNow] = useState(() => new Date());
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [mcOverviewOpen, setMcOverviewOpen] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000);
@@ -48,16 +76,105 @@ export function WorkspaceHeaderBar() {
     navigate('/');
   }
 
+  const useMcShell = Boolean(missionControl && activeWorkspace);
+
+  if (useMcShell && missionControl) {
+    return (
+      <header className="ft-header-bar ft-header-bar--mc">
+        <div className="ft-header-mc-left">
+          <button type="button" className="ft-btn-icon" onClick={handleGoDashboard} title="All workspaces">
+            <ChevronLeft size={16} aria-hidden />
+            <LayoutGrid size={16} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="ft-mc-brand"
+            title="Mission Control — workspace overview"
+            aria-label="Mission Control — workspace overview"
+            aria-haspopup="dialog"
+            aria-expanded={mcOverviewOpen}
+            onClick={() => setMcOverviewOpen(true)}
+          >
+            <span className="ft-mc-brand-icon" aria-hidden>
+              <Rocket size={18} />
+            </span>
+            <span className="ft-mc-brand-text ft-hide-below-lg">Mission Control</span>
+          </button>
+        </div>
+
+        <div className="ft-header-mc-center">
+          <div className="ft-mc-global-search">
+            <Search size={16} className="ft-mc-global-search-icon" aria-hidden />
+            <input
+              type="search"
+              className="ft-mc-global-search-input"
+              placeholder="Search tasks, ideas, specs…"
+              aria-label="Global task search"
+              value={missionControl.boardSearch}
+              onChange={(e) => missionControl.onBoardSearchChange(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="ft-header-mc-right">
+          <BackendConnectionPill isOnline={isOnline} className="ft-hide-below-lg" />
+          <button type="button" className="ft-btn-icon" title="Notifications (demo)" aria-label="Notifications">
+            <Bell size={18} />
+          </button>
+          <button
+            type="button"
+            className="ft-btn-icon"
+            title={missionControl.agentsPaused ? 'Resume agents (UI only)' : 'Pause agents (UI only)'}
+            aria-pressed={missionControl.agentsPaused}
+            onClick={() => missionControl.onAgentsPausedToggle()}
+          >
+            {missionControl.agentsPaused ? <Play size={18} /> : <Pause size={18} />}
+          </button>
+ 
+          <button
+            type="button"
+            className="ft-btn-icon ft-hide-below-lg"
+            title="Refresh board"
+            aria-label="Refresh board"
+            onClick={() => void refreshActiveBoard()}
+          >
+            <RefreshCw size={18} />
+          </button>
+          <ThemeCycleButton />
+          <button type="button" className="ft-btn-icon" title="About / settings" onClick={() => setAboutOpen(true)}>
+            <Settings size={18} />
+          </button>
+         
+        </div>
+
+        {activeWorkspace ? (
+          <MissionControlOverviewModal
+            open={mcOverviewOpen}
+            onClose={() => setMcOverviewOpen(false)}
+            workspaceName={activeWorkspace.name}
+            workspaceIcon={activeWorkspace.icon}
+            isOnline={isOnline}
+            fetchVersion={fetchVersion}
+            productDetail={productDetail}
+            productTasks={scopedTasks}
+            workspaceStats={missionControl.workspaceStats}
+          />
+        ) : null}
+
+        <AboutModal
+          open={aboutOpen}
+          onClose={() => setAboutOpen(false)}
+          fetchVersion={fetchVersion}
+          armsEnv={armsEnv}
+          productIdForSse={activeWorkspace?.id ?? null}
+        />
+      </header>
+    );
+  }
+
   return (
     <header className="ft-header-bar">
       <div className="ft-header-left">
-        <div className="ft-logo-row">
-          <Zap aria-hidden size={20} color="var(--mc-accent)" />
-          <span className="ft-upper-label" style={{ color: 'var(--mc-text)', fontWeight: 600 }}>
-            Mission Control
-          </span>
-        </div>
-
         {activeWorkspace ? (
           <>
             <button type="button" className="ft-btn-icon" onClick={handleGoDashboard} title="All workspaces">

@@ -49,10 +49,13 @@ GOWORK=off CGO_ENABLED=0 go build -trimpath -o bin/arms ./cmd/arms
 Settings are read from **environment variables** (see comments in `arms/internal/config/config.go`). You can also pass a **JSON or TOML** file; **environment always overrides** the file when a variable is set in the process environment.
 
 ```bash
-./arms/bin/arms -c ./config.toml
+# From repo root (create ./data first: mkdir -p data)
+./arms/bin/arms -c config/arms.toml
 ```
 
-Example **`config.toml`** (flat keys = env names):
+The repo includes **`config/arms.toml`** — same shape as below (flat keys = env names). Copy to **`config/arms.local.toml`** for machine-specific secrets (that path is gitignored); environment variables still override either file.
+
+Minimal excerpt:
 
 ```toml
 ARMS_LISTEN = ":8080"
@@ -142,10 +145,12 @@ bun install
 Create **`.env`** or **`.env.local`** in `fishtank/` (Vite/Bun convention — variables must be prefixed with `VITE_`):
 
 ```env
-VITE_ARMS_URL=http://127.0.0.1:8080
+VITE_ARMS_URL=http://localhost:8080
 # Optional — only if arms uses Bearer auth:
 # VITE_ARMS_TOKEN=your-mc-api-token
 ```
+
+If `VITE_ARMS_URL` is unset, the UI defaults to **`http://localhost:8080`** (same host and port as arms’ default `ARMS_LISTEN`).
 
 Start:
 

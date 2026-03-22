@@ -8,7 +8,9 @@ type FeedFilter = 'all' | 'tasks' | 'agents' | 'shipping' | 'convoy';
 
 const FILTERS: FeedFilter[] = ['all', 'tasks', 'agents', 'shipping', 'convoy'];
 
-export function LiveFeedPanel() {
+type LiveFeedPanelProps = { variant?: 'default' | 'activity' };
+
+export function LiveFeedPanel({ variant = 'default' }: LiveFeedPanelProps) {
   const { events, activeWorkspace, feedLive, bumpFeedReconnect } = useMissionUi();
   const [filter, setFilter] = useState<FeedFilter>('all');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -17,8 +19,11 @@ export function LiveFeedPanel() {
 
   const showDevTools = import.meta.env.DEV;
 
+  const title = variant === 'activity' ? 'Live Activity' : 'Live Feed';
+  const asideClass = variant === 'activity' ? 'ft-feed ft-feed--mc' : 'ft-feed';
+
   return (
-    <aside className="ft-feed">
+    <aside className={asideClass}>
       <div className="ft-sr-only" aria-live="polite">
         {activeWorkspace && !feedLive ? 'Live feed disconnected.' : ''}
       </div>
@@ -26,7 +31,7 @@ export function LiveFeedPanel() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <ChevronRight size={16} className="ft-muted" />
-            <span className="ft-upper-label">Live Feed</span>
+            <span className="ft-upper-label">{title}</span>
           </div>
           {activeWorkspace ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
@@ -42,18 +47,24 @@ export function LiveFeedPanel() {
             </div>
           ) : null}
         </div>
-        <div className="ft-tabs" style={{ marginTop: '0.65rem' }}>
-          {FILTERS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              className={`ft-tab ${filter === tab ? 'ft-tab--active' : ''}`}
-              onClick={() => setFilter(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+        {variant === 'default' ? (
+          <div className="ft-tabs" style={{ marginTop: '0.65rem' }}>
+            {FILTERS.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={`ft-tab ${filter === tab ? 'ft-tab--active' : ''}`}
+                onClick={() => setFilter(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="ft-muted" style={{ marginTop: '0.5rem', fontSize: '0.7rem', lineHeight: 1.4 }}>
+            Newest events first — agents, tasks, and shipping updates for this workspace.
+          </p>
+        )}
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
         {filtered.length === 0 ? (
