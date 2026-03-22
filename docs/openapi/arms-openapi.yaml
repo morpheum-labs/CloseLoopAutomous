@@ -416,6 +416,23 @@ components:
       required: [task_id]
       properties:
         task_id: { type: string }
+        convoy_id: { type: string, description: "With subtask_id — complete convoy subtask only" }
+        subtask_id: { type: string }
+        next_board_status:
+          type: string
+          enum: [testing, review, done]
+          description: "Optional; full_auto/semi_auto only — advance board instead of completing (omit or done = complete task)"
+
+    CiCompletionRequest:
+      type: object
+      required: [task_id, next_board_status]
+      properties:
+        task_id: { type: string }
+        next_board_status:
+          type: string
+          enum: [testing, review, done, failed]
+          description: "CI-driven Kanban target; failed defaults status_reason to CI reported failure if omitted"
+        status_reason: { type: string, description: "Optional; used for failed and other SetKanbanStatus moves" }
 
     HealthResponse:
       type: object
@@ -1141,6 +1158,38 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/AgentCompletionRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+        "401":
+          description: Invalid HMAC
+        "503":
+          description: WEBHOOK_SECRET not configured
+
+  /api/webhooks/ci-completion:
+    post:
+      tags: [Webhooks]
+      summary: CI completion (HMAC)
+      security: []
+      description: |
+        Same HMAC as agent-completion: `X-Arms-Signature` = lowercase hex HMAC-SHA256(`WEBHOOK_SECRET`, raw body).
+        Drives Kanban from CI (e.g. GitHub Actions): testing→review on green build, review→done, or failed.
+      parameters:
+        - name: X-Arms-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CiCompletionRequest" }
       responses:
         "200":
           description: OK

@@ -16,7 +16,7 @@ REST surface for the `arms` service (`cmd/arms`). **JSON** request and response 
 | **Bearer** | Set `MC_API_TOKEN`. Send `Authorization: Bearer <token>` on API calls. The same header is accepted on **`GET /api/live/events`** when auth is enabled (for fetch-based or custom SSE clients). |
 | **Same-origin** | If `ARMS_ALLOW_SAME_ORIGIN=1` or `true`, browser requests from the same origin may omit Bearer when a token is configured. |
 
-**Unauthenticated by design:** `GET /api/health`, `GET /api/docs/routes`, `POST /api/webhooks/agent-completion`. **`GET /api/live/events`** is open only when **`MC_API_TOKEN` is unset** and **`ARMS_ACL`** is empty; otherwise see **SSE** below.
+**Unauthenticated by design:** `GET /api/health`, `GET /api/docs/routes`, `POST /api/webhooks/agent-completion`, `POST /api/webhooks/ci-completion`. **`GET /api/live/events`** is open only when **`MC_API_TOKEN` is unset** and **`ARMS_ACL`** is empty; otherwise see **SSE** below.
 
 ### Request correlation
 
@@ -79,7 +79,7 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 | POST | `/api/tasks/{id}/plan/approve` | Optional `{ "spec" }` | `planning` → `inbox`, `plan_approved: true`. |
 | POST | `/api/tasks/{id}/plan/reject` | Optional `{ "status_reason" }` | Back to **`planning`** from **`inbox`** or **`assigned`** (blocked after dispatch / `external_ref` set). |
 | POST | `/api/tasks/{id}/dispatch` | `estimated_cost` (number) | Requires **`assigned`** + approved plan. Enforces **`budget.Composite`** (caps + default cumulative). **402** + **`budget_exceeded`** if `estimated_cost` would exceed allowed spend. |
-| POST | `/api/tasks/{id}/pull-request` | `head_branch` (required), optional `title`, `body` | Opens a PR using `product.repo_url` (GitHub.com or GitHub-like path on GHES) and `product.repo_branch` as base (default `main`). **REST** / **`gh`** backends as in config. Up to **3** attempts with short backoff on transient **`ErrShipping`**; errors that include **`ErrShippingNonRetryable`** (e.g. GitHub **401** / bad auth) are not retried. With **SQLite** + transactional live activity, task update and **`pull_request_opened`** outbox row commit together. Persists **`pull_request_*`** on the task when a URL is returned. Response `{ "pr_url": "...", "pr_number": <int> }` (`pr_number` omitted if unknown). Allowed while task is `in_progress`, `testing`, `review`, or `done`. |
+| POST | `/api/tasks/{id}/pull-request` | `head_branch` (required), optional `title`, `body` | Opens a PR using `product.repo_url` (GitHub.com or GitHub-like path on GHES) and `product.repo_branch` as base (default `main`). **REST** / **`gh`** backends as in config. **Duplicate open PR:** REST **422** “already exists” recovers the open PR for **`owner:head`**. **`gh`** backend: stderr that looks like a duplicate triggers **`gh pr list --head owner:branch`** and returns that PR if found. Up to **3** attempts with short backoff on transient **`ErrShipping`**; errors that include **`ErrShippingNonRetryable`** (e.g. GitHub **401** / bad auth) are not retried. With **SQLite** + transactional live activity, task update and **`pull_request_opened`** outbox row commit together. Persists **`pull_request_*`** on the task when a URL is returned. Response `{ "pr_url": "...", "pr_number": <int> }` (`pr_number` omitted if unknown). Allowed while task is `in_progress`, `testing`, `review`, or `done`. |
 | POST | `/api/tasks/{id}/merge-queue` | — | Enqueues the task on the product’s **serialized merge queue** (FIFO by row `id`). **201** `{ "status": "queued" }`. **409** `conflict` if this task already has a **pending** row. **503** if merge queue is not configured. **`operations_log`:** **`merge_queue.enqueue`**. |
 | DELETE | `/api/tasks/{id}/merge-queue` | — | Removes this task’s **pending** queue row. Allowed for **non-head** entries anytime; for the **head**, allowed only when there is **no active merge ship lease** (otherwise **503** **`merge_lease_busy`**). **404** if not queued. **`operations_log`:** **`merge_queue.cancel`**. |
 | POST | `/api/tasks/{id}/merge-queue/complete` | Query: optional **`skip_ship=1`** or **`skip_real_merge=1`** to advance the queue without calling GitHub/git | **Head-only** (same as before). With **`ARMS_MERGE_BACKEND=github`**, merges **`pull_request_number`** via REST (needs token + PR opened first). With **`local`**, runs **`git merge`** in **`product.repo_clone_path`** (needs **`pull_request_head_branch`**). **409** **`merge_conflict`** on conflict; **503** **`merge_lease_busy`** if another instance holds the lease. Default backend **`noop`** keeps metadata-only completion. **`operations_log`:** **`merge_queue.complete`** (body includes **`skip_ship`**). |
@@ -134,16 +134,43 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 
 ---
 
-## Webhook (agent completion)
+## Webhooks (HMAC, not Bearer)
 
 | Method | Path | Auth |
 |--------|------|------|
-| POST | `/api/webhooks/agent-completion` | **HMAC**, not Bearer |
+| POST | `/api/webhooks/agent-completion` | **HMAC** |
+| POST | `/api/webhooks/ci-completion` | **HMAC** (same secret) |
+
+### Agent completion (`POST /api/webhooks/agent-completion`)
 
 - Header: **`X-Arms-Signature`** = lowercase hex **HMAC-SHA256**(`WEBHOOK_SECRET`, raw request body).
-- Body (parent task completion): `{ "task_id": "<id>" }`.
-- Body (convoy subtask, without completing parent): `{ "task_id": "<parent_task_id>", "convoy_id": "<id>", "subtask_id": "<id>" }` — both **`convoy_id`** and **`subtask_id`** are required together; marks the subtask **completed** for DAG gating.
+- Body (parent task completion): `{ "task_id": "<id>" }` — marks task **done** (same as before).
+- Optional **`next_board_status`**: **`"testing"`** or **`"review"`** — for products with **`automation_tier`** **`full_auto`** or **`semi_auto`**, performs **`SetKanbanStatus`** instead of completing (e.g. **`in_progress` → `testing`** for “implementation ready for QA”, **`testing` → `review`** to trigger **auto PR** when configured). Invalid transitions return **400**. **`supervised`** (or unknown tier) ignores this and **completes** the task.
+- Body (convoy subtask, without completing parent): `{ "task_id": "<parent_task_id>", "convoy_id": "<id>", "subtask_id": "<id>" }` — both **`convoy_id`** and **`subtask_id`** are required together; marks the subtask **completed** for DAG gating (**`next_board_status`** not used on this path).
 - Requires `WEBHOOK_SECRET` set; otherwise **503**.
+
+### CI completion (`POST /api/webhooks/ci-completion`)
+
+Same **`X-Arms-Signature`** = HMAC-SHA256(`WEBHOOK_SECRET`, raw body) as the agent webhook.
+
+Body:
+
+- **`task_id`** (required)
+- **`next_board_status`** (required): **`testing`**, **`review`**, **`done`**, or **`failed`**
+- **`status_reason`** (optional): stored on the task when the move uses **`SetKanbanStatus`**; for **`failed`**, defaults to **`CI reported failure`** if omitted
+
+Semantics: applies the same Kanban transition rules as **`PATCH /api/tasks/{id}`** (`domain.AllowedKanbanTransition` in-tree) — e.g. **`testing` → `review`** after a green CI run, **`review` → `done`** when checks pass on the PR branch, **`failed`** when the pipeline fails. **`done`** uses the same completion path as **`POST /api/tasks/{id}/complete`** (including **`full_auto` / `semi_auto`** merge-queue side effects when configured). **`full_auto`** may still **auto-open a PR** when entering **`review`** from **`testing` / `in_progress` / `convoy_active`** (same as Kanban **`PATCH`**). All automation tiers may call this endpoint (including **`supervised`** for **`failed`** or manual promotion).
+
+**GitHub Actions example** (job step after your checks):
+
+```bash
+BODY=$(jq -n --arg tid "${ARMS_TASK_ID}" '{task_id:$tid,next_board_status:"review"}')
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $NF}')
+curl -sS -X POST "$ARMS_BASE/api/webhooks/ci-completion" \
+  -H "Content-Type: application/json" -H "X-Arms-Signature: $SIG" -d "$BODY"
+```
+
+Store **`WEBHOOK_SECRET`** and **`ARMS_TASK_ID`** in repo **secrets**; map workflow **`conclusion`** to **`next_board_status`** / **`failed`** in the workflow.
 
 ---
 
@@ -153,7 +180,7 @@ Task JSON includes at least: `id`, `product_id`, `idea_id`, `spec`, `status` (st
 |--------|------|--------|
 | GET | `/api/live/events` | `text/event-stream`. When **`MC_API_TOKEN`** is set: **`Authorization: Bearer <token>`** or **`?token=<same value>`** (native **`EventSource`** only supports the query form). When only **`ARMS_ACL`** is configured: **`?basic=<base64(user:password)>`**. Optional **`product_id=`** — only forward `data:` lines whose JSON `product_id` matches (or lacks `product_id`). |
 
-After the initial `hello` object, each **`data:`** line is JSON with at least `type`, `ts` (RFC3339 nano), and optional `product_id`, `task_id`, `data` (object). Types include **`task_dispatched`**, **`cost_recorded`**, **`checkpoint_saved`**, **`task_completed`** (`data.source` e.g. `api_task_complete` / `agent_completion_webhook`), **`task_stall_nudged`**, **`pull_request_opened`** (includes `data.html_url`, optional `data.number`), **`merge_ship_completed`** (`data.state`, `data.merged_sha`, `data.error`, `data.conflict_files`, `data.merge_queue_row_id`), **`convoy_subtask_dispatched`** (`data.convoy_id`, `data.subtask_id`, `data.agent_role`, `data.external_ref`), **`convoy_subtask_completed`**. With **`DATABASE_PATH`** set, events are persisted in **`event_outbox`** and relayed to subscribers (restart-safe delivery of pending rows). In-memory mode broadcasts directly from the hub.
+After the initial `hello` object, each **`data:`** line is JSON with at least `type`, `ts` (RFC3339 nano), and optional `product_id`, `task_id`, `data` (object). Types include **`task_dispatched`**, **`cost_recorded`**, **`checkpoint_saved`**, **`task_completed`** (`data.source` e.g. `api_task_complete` / `agent_completion_webhook` / `ci_completion_webhook`), **`task_stall_nudged`**, **`pull_request_opened`** (includes `data.html_url`, optional `data.number`), **`merge_ship_completed`** (`data.state`, `data.merged_sha`, `data.error`, `data.conflict_files`, `data.merge_queue_row_id`), **`convoy_subtask_dispatched`** (`data.convoy_id`, `data.subtask_id`, `data.agent_role`, `data.external_ref`), **`convoy_subtask_completed`**. With **`DATABASE_PATH`** set, events are persisted in **`event_outbox`** and relayed to subscribers (restart-safe delivery of pending rows). In-memory mode broadcasts directly from the hub.
 
 ---
 

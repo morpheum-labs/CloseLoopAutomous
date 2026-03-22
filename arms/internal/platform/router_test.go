@@ -59,6 +59,83 @@ func TestWebhookAgentCompletion(t *testing.T) {
 	}
 }
 
+func TestWebhookAgentCompletionNextBoardStatusTesting(t *testing.T) {
+	cfg := httpapi.Config{WebhookSecret: "testsecret"}
+	app := platform.NewInMemoryApp(cfg)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0)
+	// Register full_auto product (ApplyAgentWebhookOutcome uses tier for next_board_status).
+	prod := &domain.Product{
+		ID: "prod-fa", Name: "fa", Stage: domain.StageResearch, WorkspaceID: "w",
+		UpdatedAt: now, AutomationTier: domain.TierFullAuto,
+	}
+	if err := app.Products.Save(ctx, prod); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Tasks.Save(ctx, &domain.Task{
+		ID: "task-fa", ProductID: "prod-fa", IdeaID: "idea-1", Spec: "s",
+		Status: domain.StatusInProgress, PlanApproved: true, ExternalRef: "x",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"task_id":"task-fa","next_board_status":"testing"}`)
+	mac := hmac.New(sha256.New, []byte(cfg.WebhookSecret))
+	_, _ = mac.Write(body)
+	sig := hex.EncodeToString(mac.Sum(nil))
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-completion", bytes.NewReader(body))
+	req.Header.Set("X-Arms-Signature", sig)
+	rec := httptest.NewRecorder()
+	httpapi.NewRouter(cfg, app.Handlers).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	tt, err := app.Tasks.ByID(ctx, "task-fa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tt.Status != domain.StatusTesting {
+		t.Fatalf("want testing got %s", tt.Status)
+	}
+}
+
+func TestWebhookCICompletionReview(t *testing.T) {
+	cfg := httpapi.Config{WebhookSecret: "testsecret"}
+	app := platform.NewInMemoryApp(cfg)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0)
+	if err := app.Products.Save(ctx, &domain.Product{
+		ID: "prod-ci", Name: "ci", Stage: domain.StageResearch, WorkspaceID: "w",
+		UpdatedAt: now, AutomationTier: domain.TierFullAuto,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Tasks.Save(ctx, &domain.Task{
+		ID: "task-ci", ProductID: "prod-ci", IdeaID: "idea-1", Spec: "s",
+		Status: domain.StatusTesting, PlanApproved: true, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"task_id":"task-ci","next_board_status":"review"}`)
+	mac := hmac.New(sha256.New, []byte(cfg.WebhookSecret))
+	_, _ = mac.Write(body)
+	sig := hex.EncodeToString(mac.Sum(nil))
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/ci-completion", bytes.NewReader(body))
+	req.Header.Set("X-Arms-Signature", sig)
+	rec := httptest.NewRecorder()
+	httpapi.NewRouter(cfg, app.Handlers).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	tt, err := app.Tasks.ByID(ctx, "task-ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tt.Status != domain.StatusReview {
+		t.Fatalf("want review got %s", tt.Status)
+	}
+}
+
 func TestWebhookAgentCompletionConvoyFieldsPartialRejected(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "testsecret"}
 	app := platform.NewInMemoryApp(cfg)

@@ -2,6 +2,7 @@ package shipping
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -97,6 +98,12 @@ func (g *GitHubPRMerger) MergePullRequest(ctx context.Context, owner, repo strin
 		out, _ := githubMergeErrToResult(resp, err)
 		if out.State == domain.MergeShipConflict {
 			return out, fmt.Errorf("%w: %s", domain.ErrMergeConflict, out.ErrorMessage)
+		}
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			return out, errors.Join(
+				domain.ErrShippingNonRetryable,
+				fmt.Errorf("%w: unauthorized (check token scopes: repo)", domain.ErrShipping),
+			)
 		}
 		return out, fmt.Errorf("%w: %s", domain.ErrShipping, out.ErrorMessage)
 	}

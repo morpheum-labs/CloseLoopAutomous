@@ -72,7 +72,8 @@ func routeCatalog() []RouteEntry {
 		{"GET", "/api/workspaces", "Workspace snapshot: allocated ports + merge_queue_pending"},
 		{"GET", "/api/operations-log", "Audit log (?limit=, ?product_id=, ?action=, ?resource_type=, ?since= RFC3339)"},
 		{"GET", "/api/settings", "Settings (stub)"},
-		{"POST", "/api/webhooks/agent-completion", "Agent completion (HMAC, not Bearer); body task_id + optional convoy_id + subtask_id to complete a convoy subtask without closing parent task"},
+		{"POST", "/api/webhooks/agent-completion", "Agent completion (HMAC); body task_id; optional next_board_status testing|review for full_auto/semi_auto Kanban advance; optional convoy_id+subtask_id for subtask completion"},
+		{"POST", "/api/webhooks/ci-completion", "CI completion (HMAC, same WEBHOOK_SECRET); body task_id, next_board_status testing|review|done|failed; optional status_reason (default reason when failed if empty)"},
 		{"GET", "/api/live/events", "SSE activity stream (Bearer or ?token= when MC_API_TOKEN; ?basic= for ARMS_ACL; ?product_id= filters)"},
 	}
 }

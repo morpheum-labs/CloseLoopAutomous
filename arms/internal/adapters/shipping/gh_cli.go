@@ -3,12 +3,13 @@ package shipping
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/closeloopautomous/arms/internal/domain"
@@ -88,11 +89,20 @@ func (g *GhCLIPublisher) CreatePullRequest(ctx context.Context, in ports.CreateP
 	}
 
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+		stderrStr := strings.TrimSpace(stderr.String())
+		if stderrStr == "" {
+			stderrStr = err.Error()
 		}
-		return ports.CreatePullRequestResult{}, fmt.Errorf("%w: gh: %s", domain.ErrShipping, msg)
+		if ghStderrLooksLikeDuplicatePR(stderrStr) {
+			recovered, rerr := g.listOpenPRByHead(ctx, ghBin, owner, repo, head)
+			if rerr != nil {
+				return ports.CreatePullRequestResult{}, rerr
+			}
+			if strings.TrimSpace(recovered.HTMLURL) != "" {
+				return recovered, nil
+			}
+		}
+		return ports.CreatePullRequestResult{}, fmt.Errorf("%w: gh: %s", domain.ErrShipping, stderrStr)
 	}
 
 	url := strings.TrimSpace(stdout.String())
@@ -117,4 +127,53 @@ func parsePRNumberFromURL(u string) int {
 	}
 	n, _ := strconv.Atoi(m[1])
 	return n
+}
+
+func ghStderrLooksLikeDuplicatePR(s string) bool {
+	low := strings.ToLower(s)
+	return strings.Contains(low, "already exists") ||
+		strings.Contains(low, "pull request already") ||
+		strings.Contains(low, "a pull request already")
+}
+
+type ghPRListItem struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
+}
+
+// listOpenPRByHead runs `gh pr list` for owner:branch (same convention as REST duplicate recovery).
+func (g *GhCLIPublisher) listOpenPRByHead(ctx context.Context, ghBin, owner, repo, head string) (ports.CreatePullRequestResult, error) {
+	headRef := strings.TrimSpace(owner) + ":" + strings.TrimSpace(head)
+	args := []string{
+		"pr", "list",
+		"--repo", owner + "/" + repo,
+		"--head", headRef,
+		"--state", "open",
+		"--json", "number,url",
+		"--limit", "1",
+	}
+	cmd := exec.CommandContext(ctx, ghBin, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1")
+	if g.EnterpriseHost != "" {
+		cmd.Env = append(cmd.Env, "GH_HOST="+g.EnterpriseHost)
+	}
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return ports.CreatePullRequestResult{}, fmt.Errorf("%w: gh pr list: %s", domain.ErrShipping, msg)
+	}
+	var items []ghPRListItem
+	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+		return ports.CreatePullRequestResult{}, fmt.Errorf("%w: gh pr list json: %v", domain.ErrShipping, err)
+	}
+	if len(items) == 0 || strings.TrimSpace(items[0].URL) == "" {
+		return ports.CreatePullRequestResult{}, nil
+	}
+	u := strings.TrimSpace(items[0].URL)
+	return ports.CreatePullRequestResult{HTMLURL: u, Number: items[0].Number}, nil
 }

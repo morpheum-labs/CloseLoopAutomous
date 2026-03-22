@@ -236,7 +236,7 @@ func (s *Service) mergeGitHub(ctx context.Context, t *domain.Task, p *domain.Pro
 	if strings.TrimSpace(pol.MergeMethod) != "" {
 		method = domain.NormalizeMergeMethod(pol.MergeMethod)
 	}
-	return s.PRMerger.MergePullRequest(ctx, owner, repo, t.PullRequestNumber, method)
+	return mergePullRequestWithRetry(ctx, s.PRMerger, owner, repo, t.PullRequestNumber, method)
 }
 
 func (s *Service) mergeLocal(ctx context.Context, t *domain.Task, p *domain.Product) (domain.MergeShipResult, error) {

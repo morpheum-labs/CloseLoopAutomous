@@ -1668,7 +1668,7 @@ func (h *Handlers) agentCompletionWebhook(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	if err := h.Task.CompleteWithLiveActivity(ctx, tid, "agent_completion_webhook"); err != nil {
+	if err := h.Task.ApplyAgentWebhookOutcome(ctx, tid, req.NextBoardStatus, "agent_completion_webhook"); err != nil {
 		if mapDomainErr(w, err) {
 			return
 		}
@@ -1676,7 +1676,50 @@ func (h *Handlers) agentCompletionWebhook(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !h.Task.UsesLiveActivityTX() {
-		h.recordAgentHealthCompletion(ctx, tid, "agent_completion_webhook")
+		if t, e := h.Task.Tasks.ByID(ctx, tid); e == nil && t.Status == domain.StatusDone {
+			h.recordAgentHealthCompletion(ctx, tid, "agent_completion_webhook")
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handlers) ciCompletionWebhook(w http.ResponseWriter, r *http.Request) {
+	if h.Config.WebhookSecret == "" {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", "WEBHOOK_SECRET is not set")
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "body", err.Error())
+		return
+	}
+	sig := r.Header.Get(webhookSigHeader)
+	if !hmacSHA256Equal(h.Config.WebhookSecret, body, sig) {
+		writeError(w, http.StatusUnauthorized, "invalid_signature", "HMAC verification failed")
+		return
+	}
+	var req ciCompletionReq
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	ctx := r.Context()
+	tid := domain.TaskID(req.TaskID)
+	if err := h.Task.ApplyCIWebhookOutcome(ctx, tid, req.NextBoardStatus, req.StatusReason, "ci_completion_webhook"); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if !h.Task.UsesLiveActivityTX() {
+		if t, e := h.Task.Tasks.ByID(ctx, tid); e == nil && t.Status == domain.StatusDone {
+			h.recordAgentHealthCompletion(ctx, tid, "ci_completion_webhook")
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

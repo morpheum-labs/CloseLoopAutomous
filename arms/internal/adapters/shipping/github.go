@@ -73,6 +73,13 @@ func (g *GitHubPublisher) CreatePullRequest(ctx context.Context, in ports.Create
 				fmt.Errorf("%w: unauthorized (check token scopes: repo)", domain.ErrShipping),
 			)
 		}
+		recovered, rerr := g.recoverOpenPRIfDuplicate(ctx, owner, repo, head, resp, err)
+		if rerr != nil {
+			return ports.CreatePullRequestResult{}, rerr
+		}
+		if strings.TrimSpace(recovered.HTMLURL) != "" {
+			return recovered, nil
+		}
 		return ports.CreatePullRequestResult{}, fmt.Errorf("%w: %v", domain.ErrShipping, err)
 	}
 	if created == nil || created.HTMLURL == nil || strings.TrimSpace(*created.HTMLURL) == "" {
@@ -83,6 +90,58 @@ func (g *GitHubPublisher) CreatePullRequest(ctx context.Context, in ports.Create
 		n = *created.Number
 	}
 	return ports.CreatePullRequestResult{HTMLURL: *created.HTMLURL, Number: n}, nil
+}
+
+func (g *GitHubPublisher) recoverOpenPRIfDuplicate(ctx context.Context, owner, repo, head string, resp *github.Response, createErr error) (ports.CreatePullRequestResult, error) {
+	if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		return ports.CreatePullRequestResult{}, nil
+	}
+	var ge *github.ErrorResponse
+	if !errors.As(createErr, &ge) || !githubErrorIndicatesDuplicateOpenPR(ge) {
+		return ports.CreatePullRequestResult{}, nil
+	}
+	existing, err := g.findOpenPullRequestByHead(ctx, owner, repo, head)
+	if err != nil {
+		return ports.CreatePullRequestResult{}, err
+	}
+	if existing == nil || existing.HTMLURL == nil || strings.TrimSpace(*existing.HTMLURL) == "" {
+		return ports.CreatePullRequestResult{}, nil
+	}
+	n := 0
+	if existing.Number != nil {
+		n = *existing.Number
+	}
+	return ports.CreatePullRequestResult{HTMLURL: strings.TrimSpace(*existing.HTMLURL), Number: n}, nil
+}
+
+func githubErrorIndicatesDuplicateOpenPR(ge *github.ErrorResponse) bool {
+	if ge == nil {
+		return false
+	}
+	msg := strings.ToLower(ge.Message)
+	for _, e := range ge.Errors {
+		if strings.Contains(strings.ToLower(e.Message), "already exists") {
+			return true
+		}
+	}
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "pull request already")
+}
+
+func (g *GitHubPublisher) findOpenPullRequestByHead(ctx context.Context, owner, repo, head string) (*github.PullRequest, error) {
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return nil, nil
+	}
+	opts := &github.PullRequestListOptions{
+		State: "open",
+		Head:  owner + ":" + head,
+		ListOptions: github.ListOptions{PerPage: 10},
+	}
+	list, _, err := g.client.PullRequests.List(ctx, owner, repo, opts)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return list[0], nil
 }
 
 // PublisherSettings selects how POST /api/tasks/{id}/pull-request opens a PR (REST PAT vs gh CLI).

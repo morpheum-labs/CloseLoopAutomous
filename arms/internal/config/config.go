@@ -13,7 +13,7 @@ import (
 // Environment variables:
 //   - ARMS_LISTEN — HTTP bind address (default ":8080")
 //   - MC_API_TOKEN — Bearer API token; empty disables auth
-//   - WEBHOOK_SECRET — HMAC key for POST /api/webhooks/agent-completion
+//   - WEBHOOK_SECRET — HMAC key for POST /api/webhooks/agent-completion and POST /api/webhooks/ci-completion
 //   - ARMS_ALLOW_SAME_ORIGIN — "1" or "true" to allow same-origin browser calls without Bearer when token is set
 //   - DATABASE_PATH — SQLite file path; empty uses in-memory stores
 //   - ARMS_DB_BACKUP — "1" or "true" to VACUUM INTO backup before migrate

@@ -327,9 +327,10 @@ func (r *allocatePortReq) validate() error {
 }
 
 type agentCompletionReq struct {
-	TaskID    string `json:"task_id"`
-	ConvoyID  string `json:"convoy_id,omitempty"`
-	SubtaskID string `json:"subtask_id,omitempty"`
+	TaskID           string `json:"task_id"`
+	ConvoyID         string `json:"convoy_id,omitempty"`
+	SubtaskID        string `json:"subtask_id,omitempty"`
+	NextBoardStatus  string `json:"next_board_status,omitempty"` // omit or "done" → complete task; "testing" | "review" → Kanban move for full_auto/semi_auto
 }
 
 func (r *agentCompletionReq) validate() error {
@@ -340,6 +341,22 @@ func (r *agentCompletionReq) validate() error {
 	s := strings.TrimSpace(r.SubtaskID)
 	if (c != "" || s != "") && (c == "" || s == "") {
 		return fmt.Errorf("convoy_id and subtask_id must both be set when reporting convoy subtask completion")
+	}
+	return nil
+}
+
+type ciCompletionReq struct {
+	TaskID          string `json:"task_id"`
+	NextBoardStatus string `json:"next_board_status"`
+	StatusReason    string `json:"status_reason,omitempty"`
+}
+
+func (r *ciCompletionReq) validate() error {
+	if strings.TrimSpace(r.TaskID) == "" {
+		return fmt.Errorf("task_id is required")
+	}
+	if strings.TrimSpace(r.NextBoardStatus) == "" {
+		return fmt.Errorf("next_board_status is required")
 	}
 	return nil
 }
