@@ -23,6 +23,7 @@ import (
 	"github.com/closeloopautomous/arms/internal/application/autopilot"
 	"github.com/closeloopautomous/arms/internal/application/convoy"
 	"github.com/closeloopautomous/arms/internal/application/cost"
+	"github.com/closeloopautomous/arms/internal/application/feedback"
 	"github.com/closeloopautomous/arms/internal/application/mergequeue"
 	productapp "github.com/closeloopautomous/arms/internal/application/product"
 	"github.com/closeloopautomous/arms/internal/application/task"
@@ -39,6 +40,7 @@ type Handlers struct {
 	Config    Config
 	Product   *productapp.Service
 	Autopilot *autopilot.Service
+	Feedback  *feedback.Service
 	Task      *task.Service
 	Convoy    *convoy.Service
 	Agent     *agentapp.Service
@@ -54,6 +56,9 @@ type Handlers struct {
 	AutopilotScheduleReconcile func(context.Context)
 	// ResyncProductSchedule re-enqueues Asynq product:schedule:tick for one product after PATCH (set when Redis is configured).
 	ResyncProductSchedule func(context.Context, domain.ProductID)
+	// BuildVersion / BuildCommit are set from cmd/arms linker flags (see platform.Build).
+	BuildVersion string
+	BuildCommit  string
 }
 
 func (h *Handlers) maybeReconcileAutopilotSchedule(ctx context.Context) {
@@ -387,14 +392,18 @@ func (h *Handlers) listMaybePool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	ids, err := h.Autopilot.MaybePool.ListIdeaIDsByProduct(r.Context(), pid)
+	if h.Autopilot.MaybePool == nil {
+		writeError(w, http.StatusServiceUnavailable, "not_configured", domain.ErrNotConfigured.Error())
+		return
+	}
+	entries, err := h.Autopilot.MaybePool.ListEntriesByProduct(r.Context(), pid)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	out := make([]any, 0, len(ids))
-	for _, iid := range ids {
-		idea, err := h.Autopilot.Ideas.ByID(r.Context(), iid)
+	out := make([]any, 0, len(entries))
+	for _, e := range entries {
+		idea, err := h.Autopilot.Ideas.ByID(r.Context(), e.IdeaID)
 		if err != nil {
 			if mapDomainErr(w, err) {
 				return
@@ -402,9 +411,126 @@ func (h *Handlers) listMaybePool(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
 		}
-		out = append(out, ideaToJSON(idea))
+		m := ideaToJSON(idea)
+		m["maybe_pool_created_at"] = e.CreatedAt.UTC().Format(time.RFC3339Nano)
+		if !e.LastEvaluatedAt.IsZero() {
+			m["maybe_last_evaluated_at"] = e.LastEvaluatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !e.NextEvaluateAt.IsZero() {
+			m["maybe_next_evaluate_at"] = e.NextEvaluateAt.UTC().Format(time.RFC3339Nano)
+		}
+		m["maybe_evaluation_count"] = e.EvaluationCount
+		if strings.TrimSpace(e.EvaluationNotes) != "" {
+			m["maybe_evaluation_notes"] = e.EvaluationNotes
+		}
+		out = append(out, m)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ideas": out})
+}
+
+func (h *Handlers) maybePoolBatchReeval(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte("{}")
+	}
+	var req maybePoolBatchReevalReq
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	pid := domain.ProductID(r.PathValue("id"))
+	if err := h.Autopilot.BatchReevaluateMaybePool(r.Context(), pid, req.Note, req.NextEvaluateDelaySec); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	h.listMaybePool(w, r)
+}
+
+func (h *Handlers) postProductFeedback(w http.ResponseWriter, r *http.Request) {
+	var req postProductFeedbackReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	ctx := r.Context()
+	pid := domain.ProductID(r.PathValue("id"))
+	f, err := h.Feedback.Append(ctx, pid, feedback.AppendInput{
+		Source: req.Source, Content: req.Content, CustomerID: req.CustomerID,
+		Category: req.Category, Sentiment: req.Sentiment, IdeaID: req.IdeaID,
+	})
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	detail, _ := json.Marshal(map[string]string{"feedback_id": f.ID})
+	h.logOperation(ctx, "http", "product.feedback.append", "product", string(pid), string(detail), "")
+	writeJSON(w, http.StatusCreated, feedbackToJSON(f))
+}
+
+func (h *Handlers) listProductFeedback(w http.ResponseWriter, r *http.Request) {
+	pid := domain.ProductID(r.PathValue("id"))
+	limit := 100
+	if q := strings.TrimSpace(r.URL.Query().Get("limit")); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "validation", "limit must be a positive integer")
+			return
+		}
+		limit = n
+	}
+	list, err := h.Feedback.ListByProduct(r.Context(), pid, limit)
+	if err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := make([]any, 0, len(list))
+	for i := range list {
+		out = append(out, feedbackToJSON(&list[i]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"feedback": out})
+}
+
+func (h *Handlers) patchProductFeedback(w http.ResponseWriter, r *http.Request) {
+	var req patchProductFeedbackReq
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if err := req.validate(); err != nil {
+		writeError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if err := h.Feedback.SetProcessed(r.Context(), id, req.Processed); err != nil {
+		if mapDomainErr(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	row, err := h.Feedback.ByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, feedbackToJSON(row))
 }
 
 func (h *Handlers) promoteMaybe(w http.ResponseWriter, r *http.Request) {
@@ -1945,6 +2071,24 @@ func ideaToJSON(i *domain.Idea) map[string]any {
 	if i.ResurfacedFrom != "" {
 		m["resurfaced_from"] = string(i.ResurfacedFrom)
 		m["resurfaced_reason"] = i.ResurfacedReason
+	}
+	return m
+}
+
+func feedbackToJSON(f *domain.ProductFeedback) map[string]any {
+	m := map[string]any{
+		"id":          f.ID,
+		"product_id":  string(f.ProductID),
+		"source":      f.Source,
+		"content":     f.Content,
+		"customer_id": f.CustomerID,
+		"category":    f.Category,
+		"sentiment":   f.Sentiment,
+		"processed":   f.Processed,
+		"created_at":  f.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if f.IdeaID != "" {
+		m["idea_id"] = string(f.IdeaID)
 	}
 	return m
 }

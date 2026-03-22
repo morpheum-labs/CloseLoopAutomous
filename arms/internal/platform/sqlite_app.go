@@ -12,10 +12,10 @@ import (
 )
 
 // OpenApp returns an in-memory app when cfg.DatabasePath is empty; otherwise opens SQLite, migrates, and wires sqlite repositories.
-func OpenApp(ctx context.Context, cfg config.Config) (*App, error) {
+func OpenApp(ctx context.Context, cfg config.Config, b Build) (*App, error) {
 	path := strings.TrimSpace(cfg.DatabasePath)
 	if path == "" {
-		return NewInMemoryApp(cfg), nil
+		return NewInMemoryApp(cfg, b), nil
 	}
 	db, err := sqlite.Open(ctx, path)
 	if err != nil {
@@ -49,13 +49,14 @@ func OpenApp(ctx context.Context, cfg config.Config) (*App, error) {
 	ops := sqlite.NewOperationsLogStore(db)
 	sched := sqlite.NewProductScheduleStore(db)
 	cmail := sqlite.NewConvoyMailStore(db)
+	productFb := sqlite.NewProductFeedbackStore(db)
 	hub := livefeed.NewHub()
 	outbox := sqlite.NewOutboxStore(db)
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	go livefeed.RunOutboxRelay(relayCtx, outbox, hub, 200*time.Millisecond)
 	taskPub := &livefeed.OutboxPublisher{Outbox: outbox}
 	liveTX := sqlite.NewLiveActivityTX(db)
-	h, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, hub, taskPub, liveTX)
+	h, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, hub, taskPub, liveTX, b)
 	cleanup := func() {
 		relayCancel()
 		gwCleanup()

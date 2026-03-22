@@ -24,7 +24,7 @@ func main() {
 		return
 	}
 	openCtx, cancelOpen := context.WithTimeout(context.Background(), 2*time.Minute)
-	app, err := platform.OpenApp(openCtx, cfg)
+	app, err := platform.OpenApp(openCtx, cfg, platform.Build{})
 	cancelOpen()
 	if err != nil {
 		slog.Error("open app", "err", err)

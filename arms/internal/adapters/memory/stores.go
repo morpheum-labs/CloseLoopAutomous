@@ -60,28 +60,32 @@ func (s *ProductStore) ListAll(_ context.Context) ([]domain.Product, error) {
 
 var _ ports.ProductRepository = (*ProductStore)(nil)
 
+type maybePoolRow struct {
+	ProductID         domain.ProductID
+	CreatedAt         time.Time
+	LastEvaluatedAt   time.Time
+	NextEvaluateAt    time.Time
+	EvaluationCount   int
+	EvaluationNotes   string
+}
+
 type MaybePoolStore struct {
 	mu   sync.RWMutex
-	rows map[domain.IdeaID]struct {
-		ProductID domain.ProductID
-		CreatedAt time.Time
-	}
+	rows map[domain.IdeaID]*maybePoolRow
 }
 
 func NewMaybePoolStore() *MaybePoolStore {
-	return &MaybePoolStore{rows: make(map[domain.IdeaID]struct {
-		ProductID domain.ProductID
-		CreatedAt time.Time
-	})}
+	return &MaybePoolStore{rows: make(map[domain.IdeaID]*maybePoolRow)}
 }
 
 func (s *MaybePoolStore) Add(_ context.Context, ideaID domain.IdeaID, productID domain.ProductID, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.rows[ideaID] = struct {
-		ProductID domain.ProductID
-		CreatedAt time.Time
-	}{ProductID: productID, CreatedAt: at}
+	if r, ok := s.rows[ideaID]; ok {
+		r.ProductID = productID
+		return nil
+	}
+	s.rows[ideaID] = &maybePoolRow{ProductID: productID, CreatedAt: at}
 	return nil
 }
 
@@ -92,17 +96,67 @@ func (s *MaybePoolStore) Remove(_ context.Context, ideaID domain.IdeaID) error {
 	return nil
 }
 
-func (s *MaybePoolStore) ListIdeaIDsByProduct(_ context.Context, productID domain.ProductID) ([]domain.IdeaID, error) {
+func (s *MaybePoolStore) ListIdeaIDsByProduct(ctx context.Context, productID domain.ProductID) ([]domain.IdeaID, error) {
+	entries, err := s.ListEntriesByProduct(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.IdeaID, len(entries))
+	for i := range entries {
+		out[i] = entries[i].IdeaID
+	}
+	return out, nil
+}
+
+func (s *MaybePoolStore) ListEntriesByProduct(_ context.Context, productID domain.ProductID) ([]domain.MaybePoolEntry, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	var ids []domain.IdeaID
-	for iid, e := range s.rows {
-		if e.ProductID == productID {
-			ids = append(ids, iid)
+	var out []domain.MaybePoolEntry
+	for iid, r := range s.rows {
+		if r.ProductID != productID {
+			continue
+		}
+		out = append(out, domain.MaybePoolEntry{
+			IdeaID:            iid,
+			ProductID:         r.ProductID,
+			CreatedAt:         r.CreatedAt,
+			LastEvaluatedAt:   r.LastEvaluatedAt,
+			NextEvaluateAt:    r.NextEvaluateAt,
+			EvaluationCount:   r.EvaluationCount,
+			EvaluationNotes:   r.EvaluationNotes,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (s *MaybePoolStore) ApplyBatchReevaluate(_ context.Context, productID domain.ProductID, note string, nextEval time.Time, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line := strings.TrimSpace(note)
+	if line != "" {
+		line = now.UTC().Format(time.RFC3339Nano) + "\t" + line
+	}
+	for _, r := range s.rows {
+		if r.ProductID != productID {
+			continue
+		}
+		r.LastEvaluatedAt = now
+		if nextEval.IsZero() {
+			r.NextEvaluateAt = time.Time{}
+		} else {
+			r.NextEvaluateAt = nextEval
+		}
+		r.EvaluationCount++
+		if line != "" {
+			if strings.TrimSpace(r.EvaluationNotes) == "" {
+				r.EvaluationNotes = line
+			} else {
+				r.EvaluationNotes = r.EvaluationNotes + "\n" + line
+			}
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return string(ids[i]) < string(ids[j]) })
-	return ids, nil
+	return nil
 }
 
 var _ ports.MaybePoolRepository = (*MaybePoolStore)(nil)

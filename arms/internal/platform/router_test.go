@@ -20,7 +20,7 @@ import (
 
 func TestWebhookAgentCompletion(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "testsecret"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0)
 	err := app.Tasks.Save(ctx, &domain.Task{
@@ -61,7 +61,7 @@ func TestWebhookAgentCompletion(t *testing.T) {
 
 func TestWebhookAgentCompletionNextBoardStatusTesting(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "testsecret"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0)
 	// Register full_auto product (ApplyAgentWebhookOutcome uses tier for next_board_status).
@@ -101,7 +101,7 @@ func TestWebhookAgentCompletionNextBoardStatusTesting(t *testing.T) {
 
 func TestWebhookCICompletionReview(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "testsecret"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	ctx := context.Background()
 	now := time.Unix(1700000000, 0)
 	if err := app.Products.Save(ctx, &domain.Product{
@@ -138,7 +138,7 @@ func TestWebhookCICompletionReview(t *testing.T) {
 
 func TestWebhookAgentCompletionConvoyFieldsPartialRejected(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "testsecret"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	body := []byte(`{"task_id":"task-parent","convoy_id":"c1"}`)
 	mac := hmac.New(sha256.New, []byte(cfg.WebhookSecret))
 	_, _ = mac.Write(body)
@@ -154,7 +154,7 @@ func TestWebhookAgentCompletionConvoyFieldsPartialRejected(t *testing.T) {
 
 func TestWebhookInvalidHMAC(t *testing.T) {
 	cfg := httpapi.Config{WebhookSecret: "s"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	body := []byte(`{"task_id":"x"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-completion", bytes.NewReader(body))
 	req.Header.Set("X-Arms-Signature", "deadbeef")
@@ -167,7 +167,7 @@ func TestWebhookInvalidHMAC(t *testing.T) {
 
 func TestBearerAuthRequired(t *testing.T) {
 	cfg := httpapi.Config{MCAPIToken: "tok", WebhookSecret: "s"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	rec := httptest.NewRecorder()
 	httpapi.NewRouter(cfg, app.Handlers).ServeHTTP(rec, req)
@@ -191,7 +191,7 @@ func TestBearerOrACLBasicWhenBothConfigured(t *testing.T) {
 			{UserID: "u", Password: "p", Role: "admin"},
 		},
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	req.SetBasicAuth("u", "p")
 	rec := httptest.NewRecorder()
@@ -203,7 +203,7 @@ func TestBearerOrACLBasicWhenBothConfigured(t *testing.T) {
 
 func TestHealthNoAuth(t *testing.T) {
 	cfg := httpapi.Config{MCAPIToken: "tok"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	rec := httptest.NewRecorder()
 	httpapi.NewRouter(cfg, app.Handlers).ServeHTTP(rec, req)
@@ -218,7 +218,7 @@ func TestACLBasicAdmin(t *testing.T) {
 			{UserID: "admin", Password: "secret", Role: "admin"},
 		},
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodPost, "/api/products", bytes.NewReader([]byte(`{"name":"n","workspace_id":"w"}`)))
 	req.SetBasicAuth("admin", "secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -235,7 +235,7 @@ func TestACLReadCannotPost(t *testing.T) {
 			{UserID: "v", Password: "p", Role: "read"},
 		},
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodPost, "/api/products", bytes.NewReader([]byte(`{"name":"n","workspace_id":"w"}`)))
 	req.SetBasicAuth("v", "p")
 	req.Header.Set("Content-Type", "application/json")
@@ -252,7 +252,7 @@ func TestACLReadCanGet(t *testing.T) {
 			{UserID: "v", Password: "p", Role: "read"},
 		},
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	req := httptest.NewRequest(http.MethodGet, "/api/products", nil)
 	req.SetBasicAuth("v", "p")
 	rec := httptest.NewRecorder()
@@ -268,7 +268,7 @@ func TestACLSSEBasicQuery(t *testing.T) {
 			{UserID: "v", Password: "p", Role: "read"},
 		},
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	basic := base64.StdEncoding.EncodeToString([]byte("v:p"))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -282,7 +282,7 @@ func TestACLSSEBasicQuery(t *testing.T) {
 
 func TestSSEBearerAuth(t *testing.T) {
 	cfg := httpapi.Config{MCAPIToken: "sse-tok"}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/live/events", nil).WithContext(ctx)

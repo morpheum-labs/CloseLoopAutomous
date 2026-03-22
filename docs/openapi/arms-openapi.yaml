@@ -66,6 +66,12 @@ components:
       in: path
       required: true
       schema: { type: string }
+    productFeedbackId:
+      name: id
+      in: path
+      required: true
+      description: Product feedback row id (prefix `fb`, from POST /api/products/{id}/feedback).
+      schema: { type: string }
 
   schemas:
     Error:
@@ -496,6 +502,28 @@ components:
       properties:
         status: { type: string, example: ok }
 
+    VersionResponse:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Full git describe string (linker -X cmd/arms.Version)
+        tag:
+          type: string
+          description: Nearest tag from describe (or whole version when not N-gHASH form)
+        number:
+          type: string
+          description: Semver core parsed from tag without leading v (e.g. 1.2.3); empty if not parseable
+        commits_after_tag:
+          type: integer
+          description: Commits after tag when describe includes -N-gHASH; 0 on exact tag
+        commit:
+          type: string
+          description: Short git revision from linker -X cmd/arms.Commit
+        dirty:
+          type: boolean
+          description: True when version string ends with -dirty
+
     RoutesResponse:
       type: object
       properties:
@@ -523,6 +551,18 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthResponse" }
+
+  /api/version:
+    get:
+      tags: [Health]
+      summary: Server build version (tag, semver number, commit)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionResponse" }
 
   /api/docs/routes:
     get:
@@ -643,6 +683,115 @@ paths:
               schema: { $ref: "#/components/schemas/IdeasListResponse" }
         "404":
           description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/products/{id}/maybe-pool/batch-reeval:
+    post:
+      tags: [Ideas]
+      summary: Batch re-evaluate maybe-pool rows for a product
+      description: Updates evaluation metadata on all maybe-pool rows; response matches GET /api/products/{id}/maybe-pool (ideas include maybe_* fields).
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MaybePoolBatchReevalRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IdeasListResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Maybe pool store not configured
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/products/{id}/feedback:
+    post:
+      tags: [Products]
+      summary: Append product feedback
+      parameters:
+        - $ref: "#/components/parameters/productId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostProductFeedbackRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductFeedback" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    get:
+      tags: [Products]
+      summary: List product feedback
+      parameters:
+        - $ref: "#/components/parameters/productId"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductFeedbackListResponse" }
+        "404":
+          description: Product not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/product-feedback/{id}:
+    patch:
+      tags: [Products]
+      summary: Patch product feedback (e.g. processed)
+      parameters:
+        - $ref: "#/components/parameters/productFeedbackId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchProductFeedbackRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductFeedback" }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Feedback row not found
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

@@ -15,6 +15,7 @@ import (
 	"github.com/closeloopautomous/arms/internal/application/autopilot"
 	"github.com/closeloopautomous/arms/internal/application/convoy"
 	"github.com/closeloopautomous/arms/internal/application/cost"
+	"github.com/closeloopautomous/arms/internal/application/feedback"
 	"github.com/closeloopautomous/arms/internal/application/livefeed"
 	"github.com/closeloopautomous/arms/internal/application/mergequeue"
 	"github.com/closeloopautomous/arms/internal/application/product"
@@ -53,7 +54,7 @@ func (a *App) Close() error {
 }
 
 // NewInMemoryApp wires the hexagon with in-memory adapters (no persistence).
-func NewInMemoryApp(cfg config.Config) *App {
+func NewInMemoryApp(cfg config.Config, b Build) *App {
 	products := memory.NewProductStore()
 	ideas := memory.NewIdeaStore()
 	tasks := memory.NewTaskStore()
@@ -73,7 +74,8 @@ func NewInMemoryApp(cfg config.Config) *App {
 	ops := memory.NewOperationsLogStore()
 	sched := memory.NewProductScheduleStore()
 	cmail := memory.NewConvoyMailStore()
-	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, hub, hub, nil)
+	productFb := memory.NewProductFeedbackStore()
+	h, cleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, agentMail, agentHealth, pref, ops, sched, cmail, productFb, hub, hub, nil, b)
 	return &App{Handlers: h, Products: products, Ideas: ideas, Tasks: tasks, ProductSchedules: sched, db: nil, cleanup: cleanup}
 }
 
@@ -98,9 +100,11 @@ func buildHandlers(
 	operationsLog ports.OperationsLogRepository,
 	productSchedules ports.ProductScheduleRepository,
 	convoyMail ports.ConvoyMailRepository,
+	productFeedback ports.ProductFeedbackRepository,
 	hub *livefeed.Hub,
 	taskEvents ports.LiveActivityPublisher,
 	liveTX ports.LiveActivityTX,
+	b Build,
 ) (*httpapi.Handlers, func()) {
 	clock := timeadapter.System{}
 	ids := &identity.Sequential{}
@@ -203,6 +207,19 @@ func buildHandlers(
 		taskSvc.MergeShip = mergeShip
 	}
 
+	feedbackSvc := &feedback.Service{
+		Products: products,
+		Feedback: productFeedback,
+		Ideas:    ideas,
+		Clock:    clock,
+		IDs:      ids,
+	}
+
+	buildVer := strings.TrimSpace(b.Version)
+	if buildVer == "" {
+		buildVer = "dev"
+	}
+
 	return &httpapi.Handlers{
 		Config:         cfg,
 		Product:        productSvc,
@@ -211,6 +228,7 @@ func buildHandlers(
 		Convoy:         convoySvc,
 		Agent:          agentSvc,
 		Cost:           costSvc,
+		Feedback:       feedbackSvc,
 		Live:           hub,
 		WorkspacePorts: workspacePorts,
 		MergeQueue:     mergeQueue,
@@ -218,5 +236,7 @@ func buildHandlers(
 		AgentHealth:    agentHealth,
 		PrefModel:      preferenceModels,
 		OperationsLog:  operationsLog,
+		BuildVersion:   buildVer,
+		BuildCommit:    strings.TrimSpace(b.Commit),
 	}, gwCleanup
 }

@@ -10,6 +10,7 @@ type RouteEntry struct {
 func routeCatalog() []RouteEntry {
 	return []RouteEntry{
 		{"GET", "/api/health", "Liveness check (no auth)"},
+		{"GET", "/api/version", "Build version: full describe string, parsed tag, semver number, commits_after_tag, commit hash, dirty (no auth)"},
 		{"GET", "/api/docs/routes", "This route list (JSON)"},
 		{"POST", "/api/products", "Register product (optional repo_url, repo_clone_path, repo_branch, description, program_document, settings_json, icon_url, merge_policy_json)"},
 		{"GET", "/api/products", "List all products (newest registration order is store-defined; typically useful for dashboards)"},

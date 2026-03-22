@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { ArmsClient } from '../api/armsClient';
+import type { ApiVersion } from '../api/armsTypes';
 import { readArmsEnv } from '../config/armsEnv';
 import { useArmsLiveFeed } from '../hooks/useArmsLiveFeed';
 import type { Agent, FeedEvent, Task, WorkspaceStats } from '../domain/types';
@@ -52,6 +53,8 @@ export interface MissionUiValue {
   refreshWorkspaces: () => Promise<void>;
   registerProduct: (name: string, workspaceId: string) => Promise<void>;
   dismissError: () => void;
+  /** GET /api/version — public; used by About modal. */
+  fetchVersion: () => Promise<ApiVersion>;
 }
 
 const MissionUiContext = createContext<MissionUiValue | null>(null);
@@ -186,6 +189,8 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
 
   const dismissError = useCallback(() => setApiError(null), []);
 
+  const fetchVersion = useCallback(() => client.version(), [client]);
+
   const value = useMemo<MissionUiValue>(
     () => ({
       workspaces,
@@ -202,6 +207,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       refreshWorkspaces,
       registerProduct,
       dismissError,
+      fetchVersion,
     }),
     [
       workspaces,
@@ -218,6 +224,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       refreshWorkspaces,
       registerProduct,
       dismissError,
+      fetchVersion,
     ],
   );
 

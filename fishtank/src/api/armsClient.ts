@@ -1,5 +1,5 @@
 import type { ArmsEnv } from '../config/armsEnv';
-import type { ApiAgentHealthItem, ApiProduct, ApiTask } from './armsTypes';
+import type { ApiAgentHealthItem, ApiProduct, ApiTask, ApiVersion } from './armsTypes';
 
 export class ArmsHttpError extends Error {
   constructor(
@@ -32,6 +32,10 @@ export class ArmsClient {
 
   async health(): Promise<{ status: string }> {
     return this.getJson<{ status: string }>('/api/health');
+  }
+
+  async version(): Promise<ApiVersion> {
+    return this.getJson<ApiVersion>('/api/version');
   }
 
   async listProducts(): Promise<ApiProduct[]> {

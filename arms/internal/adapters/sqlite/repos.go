@@ -182,7 +182,7 @@ var _ ports.MaybePoolRepository = (*MaybePoolStore)(nil)
 func (s *MaybePoolStore) Add(ctx context.Context, ideaID domain.IdeaID, productID domain.ProductID, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO maybe_pool (idea_id, product_id, created_at) VALUES (?, ?, ?)
-ON CONFLICT(idea_id) DO UPDATE SET product_id = excluded.product_id, created_at = excluded.created_at
+ON CONFLICT(idea_id) DO UPDATE SET product_id = excluded.product_id
 `, string(ideaID), string(productID), at.Format(time.RFC3339Nano))
 	return err
 }
@@ -193,21 +193,119 @@ func (s *MaybePoolStore) Remove(ctx context.Context, ideaID domain.IdeaID) error
 }
 
 func (s *MaybePoolStore) ListIdeaIDsByProduct(ctx context.Context, productID domain.ProductID) ([]domain.IdeaID, error) {
+	entries, err := s.ListEntriesByProduct(ctx, productID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.IdeaID, len(entries))
+	for i := range entries {
+		out[i] = entries[i].IdeaID
+	}
+	return out, nil
+}
+
+func (s *MaybePoolStore) ListEntriesByProduct(ctx context.Context, productID domain.ProductID) ([]domain.MaybePoolEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT idea_id FROM maybe_pool WHERE product_id = ? ORDER BY created_at ASC`, string(productID))
+SELECT idea_id, product_id, created_at,
+  last_evaluated_at, next_evaluate_at, evaluation_count, evaluation_notes
+FROM maybe_pool WHERE product_id = ? ORDER BY created_at ASC`, string(productID))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []domain.IdeaID
+	var out []domain.MaybePoolEntry
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var (
+			iid, pid, cat, le, ne, notes string
+			ec                           int
+		)
+		if err := rows.Scan(&iid, &pid, &cat, &le, &ne, &ec, &notes); err != nil {
 			return nil, err
 		}
-		out = append(out, domain.IdeaID(id))
+		ct, err := time.Parse(time.RFC3339Nano, cat)
+		if err != nil {
+			ct, err = time.Parse(time.RFC3339, cat)
+			if err != nil {
+				return nil, err
+			}
+		}
+		e := domain.MaybePoolEntry{
+			IdeaID:          domain.IdeaID(iid),
+			ProductID:       domain.ProductID(pid),
+			CreatedAt:       ct,
+			EvaluationCount: ec,
+			EvaluationNotes: notes,
+		}
+		if t, err := parseOptionalTime(le); err == nil && !t.IsZero() {
+			e.LastEvaluatedAt = t
+		}
+		if t, err := parseOptionalTime(ne); err == nil && !t.IsZero() {
+			e.NextEvaluateAt = t
+		}
+		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *MaybePoolStore) ApplyBatchReevaluate(ctx context.Context, productID domain.ProductID, note string, nextEval time.Time, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `
+SELECT idea_id, evaluation_notes, evaluation_count FROM maybe_pool WHERE product_id = ?`, string(productID))
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id    string
+		notes string
+		count int
+	}
+	var list []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.notes, &r.count); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	line := strings.TrimSpace(note)
+	if line != "" {
+		line = now.UTC().Format(time.RFC3339Nano) + "\t" + line
+	}
+	nextStr := ""
+	if !nextEval.IsZero() {
+		nextStr = nextEval.UTC().Format(time.RFC3339Nano)
+	}
+	nowStr := now.UTC().Format(time.RFC3339Nano)
+	for _, r := range list {
+		newNotes := r.notes
+		if line != "" {
+			if strings.TrimSpace(newNotes) == "" {
+				newNotes = line
+			} else {
+				newNotes = newNotes + "\n" + line
+			}
+		}
+		_, err := tx.ExecContext(ctx, `
+UPDATE maybe_pool SET
+  last_evaluated_at = ?,
+  next_evaluate_at = ?,
+  evaluation_count = evaluation_count + 1,
+  evaluation_notes = ?
+WHERE idea_id = ?`, nowStr, nextStr, newNotes, r.id)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // —— ideas ——

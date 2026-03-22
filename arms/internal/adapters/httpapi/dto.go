@@ -462,6 +462,36 @@ func (r *postConvoyMailReq) validate() error {
 	return nil
 }
 
+type maybePoolBatchReevalReq struct {
+	Note                 string `json:"note,omitempty"`
+	NextEvaluateDelaySec *int   `json:"next_evaluate_delay_sec,omitempty"`
+}
+
+type postProductFeedbackReq struct {
+	Source     string `json:"source"`
+	Content    string `json:"content"`
+	CustomerID string `json:"customer_id,omitempty"`
+	Category   string `json:"category,omitempty"`
+	Sentiment  string `json:"sentiment,omitempty"`
+	IdeaID     string `json:"idea_id,omitempty"`
+}
+
+func (r *postProductFeedbackReq) validate() error {
+	if strings.TrimSpace(r.Source) == "" {
+		return fmt.Errorf("source is required")
+	}
+	if strings.TrimSpace(r.Content) == "" {
+		return fmt.Errorf("content is required")
+	}
+	return nil
+}
+
+type patchProductFeedbackReq struct {
+	Processed bool `json:"processed"`
+}
+
+func (r *patchProductFeedbackReq) validate() error { return nil }
+
 // mergeQueueResolveReq is optional JSON for conflict-resolution helpers (defaults to retry_merge).
 type mergeQueueResolveReq struct {
 	Action string `json:"action"`

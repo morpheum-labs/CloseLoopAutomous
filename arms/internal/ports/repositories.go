@@ -60,6 +60,18 @@ type MaybePoolRepository interface {
 	Add(ctx context.Context, ideaID domain.IdeaID, productID domain.ProductID, at time.Time) error
 	Remove(ctx context.Context, ideaID domain.IdeaID) error
 	ListIdeaIDsByProduct(ctx context.Context, productID domain.ProductID) ([]domain.IdeaID, error)
+	ListEntriesByProduct(ctx context.Context, productID domain.ProductID) ([]domain.MaybePoolEntry, error)
+	// ApplyBatchReevaluate sets last_evaluated_at=now, increments evaluation_count, appends note to evaluation_notes,
+	// and sets next_evaluate_at from nextEval (zero time clears the field).
+	ApplyBatchReevaluate(ctx context.Context, productID domain.ProductID, note string, nextEval time.Time, now time.Time) error
+}
+
+// ProductFeedbackRepository stores external feedback rows per product.
+type ProductFeedbackRepository interface {
+	Append(ctx context.Context, f *domain.ProductFeedback) error
+	ListByProduct(ctx context.Context, productID domain.ProductID, limit int) ([]domain.ProductFeedback, error)
+	ByID(ctx context.Context, id string) (*domain.ProductFeedback, error)
+	SetProcessed(ctx context.Context, id string, processed bool) error
 }
 
 type IdeaRepository interface {

@@ -16,7 +16,7 @@ func TestOpenAppSQLiteFileRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	cfg := httpapi.Config{DatabasePath: dbPath}
-	app, err := platform.OpenApp(ctx, cfg)
+	app, err := platform.OpenApp(ctx, cfg, platform.Build{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestOpenAppSQLiteFileRoundTrip(t *testing.T) {
 	}
 
 	_ = app.Close()
-	app2, err := platform.OpenApp(ctx, cfg)
+	app2, err := platform.OpenApp(ctx, cfg, platform.Build{})
 	if err != nil {
 		t.Fatal(err)
 	}

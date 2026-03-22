@@ -18,6 +18,12 @@ import (
 	"github.com/closeloopautomous/arms/internal/platform"
 )
 
+// Version and Commit are set at link time via -ldflags (see repo Makefile).
+var (
+	Version = "dev"
+	Commit  = ""
+)
+
 func main() {
 	cfg := config.LoadFromEnv()
 	initLogging(cfg)
@@ -25,7 +31,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	app, err := platform.OpenApp(ctx, cfg)
+	app, err := platform.OpenApp(ctx, cfg, platform.Build{Version: Version, Commit: Commit})
 	if err != nil {
 		slog.Error("open app", "err", err)
 		os.Exit(1)

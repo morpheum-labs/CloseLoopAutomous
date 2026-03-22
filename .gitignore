@@ -61,7 +61,9 @@ Autensa_v2.mp4
 *.mp4
 
 # Go
+**/bin/
 arms/coverage.out
 arms/*.db
 arms/*.db-journal
 arms/*.pre-migrate-*.bak
+/bin

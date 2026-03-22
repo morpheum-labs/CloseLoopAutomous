@@ -18,6 +18,16 @@ export type ApiTask = {
   updated_at: string;
 };
 
+/** GET /api/version (no auth). */
+export type ApiVersion = {
+  version: string;
+  tag: string;
+  number: string;
+  commits_after_tag: number;
+  commit: string;
+  dirty: boolean;
+};
+
 export type ApiAgentHealthItem = {
   task_id: string;
   product_id: string;

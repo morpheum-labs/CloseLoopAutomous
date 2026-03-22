@@ -226,6 +226,35 @@ func (s *Service) PromoteMaybe(ctx context.Context, ideaID domain.IdeaID) error 
 	return nil
 }
 
+// BatchReevaluateMaybePool records a batch re-evaluation for every idea in the maybe pool (MC-style).
+// nextEvaluateDelaySec: nil or 0 → next_evaluate_at = now (due immediately); positive → now + seconds; -1 → clear next_evaluate_at.
+func (s *Service) BatchReevaluateMaybePool(ctx context.Context, productID domain.ProductID, note string, nextEvaluateDelaySec *int) error {
+	if s.MaybePool == nil {
+		return domain.ErrNotConfigured
+	}
+	if _, err := s.Products.ByID(ctx, productID); err != nil {
+		return err
+	}
+	now := s.Clock.Now().UTC()
+	var next time.Time
+	if nextEvaluateDelaySec != nil {
+		v := *nextEvaluateDelaySec
+		switch {
+		case v < -1:
+			return fmt.Errorf("%w: next_evaluate_delay_sec must be >= -1", domain.ErrInvalidInput)
+		case v == -1:
+			next = time.Time{}
+		case v == 0:
+			next = now
+		default:
+			next = now.Add(time.Duration(v) * time.Second)
+		}
+	} else {
+		next = now
+	}
+	return s.MaybePool.ApplyBatchReevaluate(ctx, productID, note, next, now)
+}
+
 // GetProductSchedule returns the schedule row or defaults (enabled, empty spec) when no row exists.
 func (s *Service) GetProductSchedule(ctx context.Context, productID domain.ProductID) (*domain.ProductSchedule, error) {
 	if _, err := s.Products.ByID(ctx, productID); err != nil {

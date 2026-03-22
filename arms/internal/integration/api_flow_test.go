@@ -27,7 +27,7 @@ func TestHTTP_ProductToTaskDispatch(t *testing.T) {
 	cfg := config.Config{
 		AccessLog: false,
 	}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
@@ -118,7 +118,7 @@ func TestHTTP_ProductToTaskDispatch(t *testing.T) {
 
 func TestHTTP_LiveSSEOnDispatch(t *testing.T) {
 	cfg := config.Config{AccessLog: false}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
@@ -189,7 +189,7 @@ func TestHTTP_LiveSSEOnDispatch(t *testing.T) {
 
 func TestHTTP_MergeQueueEnqueueAndList(t *testing.T) {
 	cfg := config.Config{AccessLog: false}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
@@ -290,7 +290,7 @@ func TestHTTP_MergeQueueEnqueueAndList(t *testing.T) {
 
 func TestHTTP_MergeQueueCancelRemovesPending(t *testing.T) {
 	cfg := config.Config{AccessLog: false}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
 	t.Cleanup(srv.Close)
@@ -325,7 +325,7 @@ func TestHTTP_MergeQueueCancelRemovesPending(t *testing.T) {
 
 func TestHTTP_MergeQueueCancelNonHead(t *testing.T) {
 	cfg := config.Config{AccessLog: false}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
 	t.Cleanup(srv.Close)
@@ -371,7 +371,7 @@ func TestHTTP_MergeQueueCancelNonHead(t *testing.T) {
 
 func TestHTTP_ProductMergePolicyJSONInvalid(t *testing.T) {
 	cfg := config.Config{AccessLog: false}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))
 	t.Cleanup(srv.Close)
@@ -385,7 +385,7 @@ func TestHTTP_ProductMergePolicyJSONInvalid(t *testing.T) {
 func TestHTTP_ConvoySubtaskWebhookAndSecondDispatch(t *testing.T) {
 	const whSecret = "int-wh-secret"
 	cfg := config.Config{AccessLog: false, WebhookSecret: whSecret}
-	app := platform.NewInMemoryApp(cfg)
+	app := platform.NewInMemoryApp(cfg, platform.Build{})
 	t.Cleanup(func() { _ = app.Close() })
 
 	srv := httptest.NewServer(httpapi.NewRouter(cfg, app.Handlers))

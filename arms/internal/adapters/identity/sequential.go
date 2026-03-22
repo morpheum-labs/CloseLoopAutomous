@@ -37,4 +37,6 @@ func (s *Sequential) NewExecutionAgentID() string { return s.next("agent") }
 
 func (s *Sequential) NewMailboxMessageID() string { return s.next("mail") }
 
+func (s *Sequential) NewProductFeedbackID() string { return s.next("fb") }
+
 var _ ports.IdentityGenerator = (*Sequential)(nil)

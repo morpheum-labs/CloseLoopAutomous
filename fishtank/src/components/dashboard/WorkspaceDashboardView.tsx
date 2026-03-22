@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Activity, Folder, Plus, RefreshCw, Rocket, Unplug } from 'lucide-react';
+import { Activity, Folder, Info, Plus, RefreshCw, Rocket, Unplug } from 'lucide-react';
 import { useMissionUi } from '../../context/MissionUiContext';
 import { BackendConnectionPill } from '../shell/BackendConnectionPill';
 import { ThemeCycleButton } from '../shell/ThemeCycleButton';
+import { AboutModal } from '../shell/AboutModal';
 import type { WorkspaceStats } from '../../domain/types';
 import { CreateProductModal } from './CreateProductModal';
 
@@ -16,8 +17,10 @@ export function WorkspaceDashboardView() {
     apiError,
     dismissError,
     isOnline,
+    fetchVersion,
   } = useMissionUi();
   const [modalOpen, setModalOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   return (
     <div className="ft-screen">
@@ -50,6 +53,10 @@ export function WorkspaceDashboardView() {
               <button type="button" className="ft-btn-ghost" disabled title="Activity dashboard (next)">
                 <Activity size={16} />
                 Activity Dashboard
+              </button>
+              <button type="button" className="ft-btn-ghost" onClick={() => setAboutOpen(true)} title="About & arms version">
+                <Info size={16} />
+                About
               </button>
               <button type="button" className="ft-btn-primary" onClick={() => setModalOpen(true)}>
                 <Plus size={16} />
@@ -110,6 +117,7 @@ export function WorkspaceDashboardView() {
         onClose={() => setModalOpen(false)}
         onCreate={(name, workspaceId) => registerProduct(name, workspaceId)}
       />
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} fetchVersion={fetchVersion} />
     </div>
   );
 }

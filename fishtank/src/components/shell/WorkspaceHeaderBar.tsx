@@ -3,11 +3,13 @@ import { ChevronLeft, LayoutGrid, Rocket, Settings, Zap } from 'lucide-react';
 import { useMissionUi } from '../../context/MissionUiContext';
 import { BackendConnectionPill } from './BackendConnectionPill';
 import { ThemeCycleButton } from './ThemeCycleButton';
+import { AboutModal } from './AboutModal';
 import { formatClock } from '../../lib/time';
 
 export function WorkspaceHeaderBar() {
-  const { activeWorkspace, isOnline, goHome, tasks, agents } = useMissionUi();
+  const { activeWorkspace, isOnline, goHome, tasks, agents, fetchVersion } = useMissionUi();
   const [now, setNow] = useState(() => new Date());
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000);
@@ -84,10 +86,17 @@ export function WorkspaceHeaderBar() {
         <button type="button" className="ft-btn-icon" title="Autopilot (UI shell)">
           <Rocket size={20} />
         </button>
-        <button type="button" className="ft-btn-icon" title="Settings (UI shell)">
+        <button
+          type="button"
+          className="ft-btn-icon"
+          title="About Fishtank / arms version"
+          onClick={() => setAboutOpen(true)}
+        >
           <Settings size={20} />
         </button>
       </div>
+
+      <AboutModal open={aboutOpen} onClose={() => setAboutOpen(false)} fetchVersion={fetchVersion} />
     </header>
   );
 }

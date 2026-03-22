@@ -13,4 +13,5 @@ type IdentityGenerator interface {
 	NewResearchCycleID() string
 	NewExecutionAgentID() string
 	NewMailboxMessageID() string
+	NewProductFeedbackID() string
 }
