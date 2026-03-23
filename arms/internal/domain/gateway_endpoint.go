@@ -9,6 +9,8 @@ import (
 const (
 	GatewayDriverStub       = "stub"
 	GatewayDriverOpenClawWS = "openclaw_ws"
+	// GatewayDriverNemoClawWS is OpenClaw-class WebSocket via NVIDIA NemoClaw / OpenShell (same wire as openclaw_ws; optional nemoclaw CLI before dial).
+	GatewayDriverNemoClawWS = "nemoclaw_ws"
 	// GatewayDriverNullClawWS is the legacy OpenClaw-shaped WebSocket RPC (not stock NullClaw HTTP).
 	GatewayDriverNullClawWS = "nullclaw_ws"
 	// GatewayDriverNullClawA2A is NullClaw's HTTP gateway: JSON-RPC 2.0 POST …/a2a (message/send).
@@ -62,6 +64,8 @@ func NormalizeGatewayDriver(s string) string {
 		return GatewayDriverStub
 	case "openclaw", "openclaw_ws", "openclaw-ws":
 		return GatewayDriverOpenClawWS
+	case "nemoclaw", "nemoclaw_ws", "nemoclaw-ws", "nvidia-claw", "nvidia_claw":
+		return GatewayDriverNemoClawWS
 	case "nullclaw", "nullclaw_ws", "nullclaw-ws":
 		return GatewayDriverNullClawWS
 	case "nullclaw_a2a", "nullclaw-a2a", "nullclaw_http", "nullclaw-http":

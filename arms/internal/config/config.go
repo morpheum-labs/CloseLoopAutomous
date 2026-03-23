@@ -16,6 +16,9 @@ import (
 //   - DATABASE_PATH — SQLite file path; empty uses in-memory stores
 //   - ARMS_DB_BACKUP — "1" or "true" to VACUUM INTO backup before migrate
 //   - OPENCLAW_DISPATCH_TIMEOUT_SEC — default per-RPC timeout when a gateway_endpoints row has timeout_sec = 0 (default 30)
+//   - ARMS_NEMOCLAW_BIN — optional path to nemoclaw executable for driver nemoclaw_ws when ARMS_NEMOCLAW_AUTO_START is enabled
+//   - ARMS_NEMOCLAW_AUTO_START — "1" or "true" to run `nemoclaw <device_id> start` before each dispatch (sandbox name = gateway endpoint device_id)
+//   - ARMS_NEMOCLAW_DEFAULT_BLUEPRINT — reserved for future policy/blueprint hooks (parsed, not yet used by the adapter)
 //   - ARMS_OPENCLAW_LIVE_CONTRACT — "1"/"true"/"yes" with gateway URL + session in env runs integration live gateway tests (#105); see internal/integration/openclaw_live_contract_test.go
 //   - ARMS_LOG_JSON — "1" or "true" for JSON logs to stdout (default text)
 //   - ARMS_ACCESS_LOG — "0", "false", "off", "no" disables per-request access logging (default on)
@@ -75,6 +78,10 @@ type Config struct {
 	DatabasePath                      string
 	DatabaseBackupBeforeMigrate       bool
 	GatewayDispatchTimeout            time.Duration
+	// NemoClaw (OpenShell): optional local `nemoclaw <sandbox> start` before OpenClaw-class WS dispatch.
+	NemoClawBin                       string
+	NemoClawAutoStart                 bool
+	NemoClawDefaultBlueprint          string
 	LogJSON                           bool
 	AccessLog                         bool
 	AutopilotTickSec                  int

@@ -221,6 +221,7 @@ function IdeationBucketsSettingsPanel() {
 const GATEWAY_DRIVER_OPTIONS = [
   ['stub', 'stub'],
   ['openclaw_ws', 'openclaw_ws'],
+  ['nemoclaw_ws', 'nemoclaw_ws'],
   ['nullclaw_ws', 'nullclaw_ws'],
   ['nullclaw_a2a', 'nullclaw_a2a'],
   ['picoclaw_ws', 'picoclaw_ws'],

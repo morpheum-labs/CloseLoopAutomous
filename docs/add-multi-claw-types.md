@@ -60,6 +60,7 @@ Defined in [`domain/gateway_endpoint.go`](../arms/internal/domain/gateway_endpoi
 |-----------------|--------|
 | `stub` | In-process [`SimulationMockClaw`](../arms/internal/adapters/gateway/simulation_mock_claw.go) |
 | `openclaw_ws` | OpenClaw WebSocket client ([`openclaw`](../arms/internal/adapters/gateway/openclaw/)); also the **default** pool branch for `nullclaw_ws` (legacy OpenClaw-shaped WS) |
+| `nemoclaw_ws` | NVIDIA NemoClaw / OpenShell: same OpenClaw-class WebSocket as `openclaw_ws`, optional `nemoclaw <sandbox> start` via `ARMS_NEMOCLAW_BIN` + `ARMS_NEMOCLAW_AUTO_START` ([`nemoclaw`](../arms/internal/adapters/gateway/nemoclaw/)); `device_id` = sandbox name for the CLI and `X-Arms-Device-Id` |
 | `nullclaw_ws` | **Legacy** OpenClaw-shaped WebSocket RPC (not stock NullClaw HTTP) |
 | `nullclaw_a2a` | NullClaw HTTP **POST /a2a** ([`nullclaw.Client`](../arms/internal/adapters/gateway/nullclaw/client.go)) |
 | `picoclaw_ws` | Pico Protocol WebSocket `message.send` + `session_id` ([`picoclaw`](../arms/internal/adapters/gateway/picoclaw/)) |
@@ -94,6 +95,7 @@ Remote clients in the pool that support it pass the same **`KnowledgeForDispatch
 | [`routing_gateway.go`](../arms/internal/adapters/gateway/routing_gateway.go) | `AgentGateway` facade: resolve target, route to stub or pool |
 | [`pool.go`](../arms/internal/adapters/gateway/pool.go) | Client pooling + per-driver dispatch for task/subtask |
 | [`openclaw/`](../arms/internal/adapters/gateway/openclaw/) | OpenClaw WS RPC + markdown/query helpers |
+| [`nemoclaw/`](../arms/internal/adapters/gateway/nemoclaw/) | NemoClaw: OpenClaw WS delegate + optional local `nemoclaw start` |
 | [`nullclaw/`](../arms/internal/adapters/gateway/nullclaw/) | NullClaw A2A HTTP JSON-RPC |
 | [`picoclaw/`](../arms/internal/adapters/gateway/picoclaw/) | PicoClaw Pico Protocol WS |
 | [`zeroclaw/`](../arms/internal/adapters/gateway/zeroclaw/) | ZeroClaw WS (OpenClaw-class) |

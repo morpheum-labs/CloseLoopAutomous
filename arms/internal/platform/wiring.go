@@ -12,6 +12,7 @@ import (
 	"github.com/closeloopautomous/arms/internal/adapters/sqlite"
 	"github.com/closeloopautomous/arms/internal/adapters/budget"
 	gw "github.com/closeloopautomous/arms/internal/adapters/gateway"
+	"github.com/closeloopautomous/arms/internal/adapters/gateway/nemoclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/httpapi"
 	"github.com/closeloopautomous/arms/internal/adapters/identity"
 	"github.com/closeloopautomous/arms/internal/adapters/memory"
@@ -142,7 +143,11 @@ func buildHandlers(
 	if err := gw.EnsureDefaultStubEndpoint(context.Background(), gatewayEndpoints, clock); err != nil {
 		slog.Error("arms gateway endpoint seed", "err", err)
 	}
-	agentGW, gwCleanup := gw.NewRoutingGateway(gatewayEndpoints, execAgents, knowHook, cfg.GatewayDispatchTimeout)
+	agentGW, gwCleanup := gw.NewRoutingGateway(gatewayEndpoints, execAgents, knowHook, cfg.GatewayDispatchTimeout, nemoclaw.PoolSettings{
+		BinaryPath:       cfg.NemoClawBin,
+		AutoStart:        cfg.NemoClawAutoStart,
+		DefaultBlueprint: cfg.NemoClawDefaultBlueprint,
+	})
 
 	budgetPolicy := &budget.Composite{
 		Costs:             costs,

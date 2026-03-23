@@ -27,6 +27,10 @@ func buildConfig(file map[string]string) Config {
 			dt = time.Duration(n) * time.Second
 		}
 	}
+	nemoBin := strings.TrimSpace(s.getenv("ARMS_NEMOCLAW_BIN"))
+	nemoAutoStart := strings.EqualFold(s.getenv("ARMS_NEMOCLAW_AUTO_START"), "1") ||
+		strings.EqualFold(s.getenv("ARMS_NEMOCLAW_AUTO_START"), "true")
+	nemoBlueprint := strings.TrimSpace(s.getenv("ARMS_NEMOCLAW_DEFAULT_BLUEPRINT"))
 	logJSON := strings.EqualFold(s.getenv("ARMS_LOG_JSON"), "1") ||
 		strings.EqualFold(s.getenv("ARMS_LOG_JSON"), "true")
 	accessLog := true
@@ -175,6 +179,9 @@ func buildConfig(file map[string]string) Config {
 		DatabasePath:                      dbPath,
 		DatabaseBackupBeforeMigrate:       backup,
 		GatewayDispatchTimeout:            dt,
+		NemoClawBin:                       nemoBin,
+		NemoClawAutoStart:                 nemoAutoStart,
+		NemoClawDefaultBlueprint:          nemoBlueprint,
 		LogJSON:                           logJSON,
 		AccessLog:                         accessLog,
 		AutopilotTickSec:                  autopilotTick,

@@ -58,6 +58,14 @@ func TestNormalizeGatewayDriver_NanobotCLI(t *testing.T) {
 	}
 }
 
+func TestNormalizeGatewayDriver_NemoClaw(t *testing.T) {
+	for _, in := range []string{"nemoclaw_ws", "NemoClaw", "nvidia-claw", "NVIDIA_CLAW"} {
+		if got := NormalizeGatewayDriver(in); got != GatewayDriverNemoClawWS {
+			t.Fatalf("%q -> %q want %s", in, got, GatewayDriverNemoClawWS)
+		}
+	}
+}
+
 func TestNormalizeGatewayDriver_ZClawRelayHTTP(t *testing.T) {
 	for _, in := range []string{"zclaw_relay_http", "zclaw", "ZCLAW-RELAY", "zclaw-http"} {
 		if got := NormalizeGatewayDriver(in); got != GatewayDriverZClawRelayHTTP {

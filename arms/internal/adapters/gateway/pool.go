@@ -11,6 +11,7 @@ import (
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/mimiclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/mistermorph"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/nanobotcli"
+	"github.com/closeloopautomous/arms/internal/adapters/gateway/nemoclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/nullclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/openclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/picoclaw"
@@ -32,11 +33,13 @@ type clientPool struct {
 	nullclawHTTP   map[string]*nullclaw.Client
 	zclawRelay     map[string]*zclaw.Client
 	misterMorph    map[string]*mistermorph.Client
+	nemoclawWS     map[string]*nemoclaw.Client
+	nemo           nemoclaw.PoolSettings
 	knowledge      func(context.Context, domain.ProductID, string) (string, error)
 	defaultTimeout time.Duration
 }
 
-func newClientPool(knowledge func(context.Context, domain.ProductID, string) (string, error), defaultTimeout time.Duration) *clientPool {
+func newClientPool(knowledge func(context.Context, domain.ProductID, string) (string, error), defaultTimeout time.Duration, nemo nemoclaw.PoolSettings) *clientPool {
 	return &clientPool{
 		openclaw:       make(map[string]*openclaw.Client),
 		zeroclaw:       make(map[string]*zeroclaw.Client),
@@ -48,6 +51,8 @@ func newClientPool(knowledge func(context.Context, domain.ProductID, string) (st
 		nullclawHTTP:   make(map[string]*nullclaw.Client),
 		zclawRelay:     make(map[string]*zclaw.Client),
 		misterMorph:    make(map[string]*mistermorph.Client),
+		nemoclawWS:     make(map[string]*nemoclaw.Client),
+		nemo:           nemo,
 		knowledge:      knowledge,
 		defaultTimeout: defaultTimeout,
 	}
@@ -60,6 +65,11 @@ func (p *clientPool) key(target domain.DispatchTarget) string {
 	}
 	if to <= 0 {
 		to = 30 * time.Second
+	}
+	// NemoClaw pool key must include process-wide CLI settings so toggling ARMS_NEMOCLAW_* does not reuse stale clients.
+	if target.Driver == domain.GatewayDriverNemoClawWS {
+		return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%v\n%s", target.Driver, target.GatewayURL, target.GatewayToken, target.DeviceID, to.String(),
+			p.nemo.BinaryPath, p.nemo.AutoStart, p.nemo.DefaultBlueprint)
 	}
 	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s", target.Driver, target.GatewayURL, target.GatewayToken, target.DeviceID, to.String())
 }
@@ -88,6 +98,34 @@ func (p *clientPool) openclawClientFor(target domain.DispatchTarget) *openclaw.C
 	}
 	c := openclaw.New(opts)
 	p.openclaw[k] = c
+	return c
+}
+
+func (p *clientPool) nemoclawClientFor(target domain.DispatchTarget) *nemoclaw.Client {
+	to := target.Timeout
+	if to <= 0 {
+		to = p.defaultTimeout
+	}
+	if to <= 0 {
+		to = 30 * time.Second
+	}
+	k := p.key(target)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.nemoclawWS[k]; ok {
+		return c
+	}
+	c := nemoclaw.New(nemoclaw.Options{
+		URL:                  target.GatewayURL,
+		Token:                target.GatewayToken,
+		DeviceID:             target.DeviceID,
+		Timeout:              to,
+		SandboxName:          target.DeviceID,
+		NemoClawBin:          p.nemo.BinaryPath,
+		AutoStart:            p.nemo.AutoStart,
+		KnowledgeForDispatch: p.knowledge,
+	})
+	p.nemoclawWS[k] = c
 	return c
 }
 
@@ -332,6 +370,8 @@ func (p *clientPool) dispatchTask(ctx context.Context, target domain.DispatchTar
 		return p.zclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	case domain.GatewayDriverMisterMorphHTTP:
 		return p.mistermorphClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
+	case domain.GatewayDriverNemoClawWS:
+		return p.nemoclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	default:
 		return p.openclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	}
@@ -357,6 +397,8 @@ func (p *clientPool) dispatchSubtask(ctx context.Context, target domain.Dispatch
 		return p.zclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	case domain.GatewayDriverMisterMorphHTTP:
 		return p.mistermorphClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
+	case domain.GatewayDriverNemoClawWS:
+		return p.nemoclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	default:
 		return p.openclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	}
@@ -395,6 +437,9 @@ func (p *clientPool) close() {
 	for _, c := range p.misterMorph {
 		_ = c.Close()
 	}
+	for _, c := range p.nemoclawWS {
+		_ = c.Close()
+	}
 	p.openclaw = make(map[string]*openclaw.Client)
 	p.zeroclaw = make(map[string]*zeroclaw.Client)
 	p.clawlet = make(map[string]*clawlet.Client)
@@ -405,4 +450,5 @@ func (p *clientPool) close() {
 	p.nullclawHTTP = make(map[string]*nullclaw.Client)
 	p.zclawRelay = make(map[string]*zclaw.Client)
 	p.misterMorph = make(map[string]*mistermorph.Client)
+	p.nemoclawWS = make(map[string]*nemoclaw.Client)
 }

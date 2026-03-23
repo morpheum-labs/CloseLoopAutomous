@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/closeloopautomous/arms/internal/adapters/gateway/nemoclaw"
 	"github.com/closeloopautomous/arms/internal/domain"
 	"github.com/closeloopautomous/arms/internal/ports"
 )
@@ -22,6 +23,7 @@ var _ ports.AgentGateway = (*RoutingGateway)(nil)
 func isPooledRemoteDriver(d string) bool {
 	switch d {
 	case domain.GatewayDriverOpenClawWS,
+		domain.GatewayDriverNemoClawWS,
 		domain.GatewayDriverNullClawWS,
 		domain.GatewayDriverNullClawA2A,
 		domain.GatewayDriverPicoClawWS,
@@ -44,9 +46,10 @@ func NewRoutingGateway(
 	agents ports.ExecutionAgentRegistry,
 	knowledge func(context.Context, domain.ProductID, string) (string, error),
 	defaultTimeout time.Duration,
+	nemo nemoclaw.PoolSettings,
 ) (*RoutingGateway, func()) {
 	stub := &SimulationMockClaw{}
-	pool := newClientPool(knowledge, defaultTimeout)
+	pool := newClientPool(knowledge, defaultTimeout, nemo)
 	resolver := &TargetResolver{Agents: agents, Endpoints: endpoints, DefaultTimeout: defaultTimeout}
 	rg := &RoutingGateway{stub: stub, pool: pool, resolver: resolver}
 	return rg, func() { pool.close() }
