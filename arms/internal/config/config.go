@@ -15,11 +15,15 @@ import (
 //   - ARMS_ALLOW_SAME_ORIGIN — "1" or "true" to allow same-origin browser calls without Bearer when token is set
 //   - DATABASE_PATH — SQLite file path; empty uses in-memory stores
 //   - ARMS_DB_BACKUP — "1" or "true" to VACUUM INTO backup before migrate
-//   - OPENCLAW_GATEWAY_URL — WebSocket gateway URL; empty uses stub gateway
+//   - ARMS_AGENT_GATEWAY_DRIVER — auto (default), stub, openclaw_ws, nullclaw_ws (aliases: openclaw, nullclaw)
+//   - OPENCLAW_GATEWAY_URL — WebSocket gateway URL; empty uses stub when driver is auto
 //   - OPENCLAW_GATEWAY_TOKEN — Bearer token on WS handshake
 //   - OPENCLAW_DISPATCH_TIMEOUT_SEC — dispatch RPC timeout seconds (default 30)
 //   - ARMS_DEVICE_ID — optional X-Arms-Device-Id on WS handshake
 //   - ARMS_OPENCLAW_SESSION_KEY — sessionKey for chat.send dispatch
+//   - NULLCLAW_GATEWAY_URL — optional; when driver is nullclaw_ws, overrides OPENCLAW_GATEWAY_URL
+//   - NULLCLAW_GATEWAY_TOKEN — optional; when driver is nullclaw_ws, overrides OPENCLAW_GATEWAY_TOKEN
+//   - ARMS_NULLCLAW_SESSION_KEY — optional; when driver is nullclaw_ws, overrides ARMS_OPENCLAW_SESSION_KEY
 //   - ARMS_OPENCLAW_LIVE_CONTRACT — "1"/"true"/"yes" with OPENCLAW_GATEWAY_URL + ARMS_OPENCLAW_SESSION_KEY runs integration live gateway tests (#105); see internal/integration/openclaw_live_contract_test.go
 //   - ARMS_LOG_JSON — "1" or "true" for JSON logs to stdout (default text)
 //   - ARMS_ACCESS_LOG — "0", "false", "off", "no" disables per-request access logging (default on)
@@ -53,6 +57,12 @@ import (
 //   - ARMS_CHROMEM_OLLAMA_BASE_URL — Ollama API base (default http://localhost:11434/api)
 //   - ARMS_CHROMEM_OPENAI_API_KEY — OpenAI key (falls back to OPENAI_API_KEY)
 //   - ARMS_CHROMEM_OPENAI_MODEL — embedding model id (default text-embedding-3-small)
+//   - ARMS_LLM_BASE_URL — OpenAI-compatible API root for autopilot research/ideation (default https://api.openai.com/v1). Use your provider’s chat-completions base (e.g. https://api.deepseek.com/v1).
+//   - ARMS_LLM_API_KEY — Bearer token for that API (falls back to OPENAI_API_KEY when empty; Ollama and some gateways need no key).
+//   - ARMS_RESEARCH_LLM_MODEL — when non-empty, Run research uses this chat model instead of the in-process stub.
+//   - ARMS_IDEATION_LLM_MODEL — when non-empty, Run ideation uses this chat model instead of the stub.
+//   - ARMS_RESEARCH_LLM_TIMEOUT_SEC — HTTP-bound timeout for one research call (default 120).
+//   - ARMS_IDEATION_LLM_TIMEOUT_SEC — HTTP-bound timeout for one ideation call (default 180).
 //   - ARMS_CORS_ALLOW_ORIGIN — optional; when non-empty, enables CORS for browser UIs on another origin (e.g. http://localhost:3000 for Fishtank). Use * only for quick local experiments.
 //   - ARMS_ACL — optional HTTP Basic ACL: semicolon-separated entries "user|password|role". Role is admin (default) or read (GET/HEAD only). Non-empty enables auth when MC_API_TOKEN is empty, or adds Basic as an alternative when both are set. User/password must not contain '|' or ';'.
 //   - ARMS_MERGE_BACKEND — merge queue completion: noop (default), github (REST merge PR), local (git merge in repo_clone_path)
@@ -72,11 +82,15 @@ type Config struct {
 	AllowLocalhost                    bool
 	DatabasePath                      string
 	DatabaseBackupBeforeMigrate       bool
+	AgentGatewayDriver                string
 	OpenClawGatewayURL                string
 	OpenClawGatewayToken              string
 	OpenClawDispatchTimeout           time.Duration
 	ArmsDeviceID                      string
 	OpenClawSessionKey                string
+	NullClawGatewayURL                string
+	NullClawGatewayToken              string
+	NullClawSessionKey                string
 	LogJSON                           bool
 	AccessLog                         bool
 	AutopilotTickSec                  int
@@ -116,6 +130,12 @@ type Config struct {
 	ChromemOllamaBaseURL              string
 	ChromemOpenAIAPIKey               string
 	ChromemOpenAIModel                string
+	LLMBaseURL                        string
+	LLMAPIKey                         string
+	ResearchLLMModel                  string
+	ResearchLLMTimeout                time.Duration
+	IdeationLLMModel                  string
+	IdeationLLMTimeout                time.Duration
 }
 
 // ACLUser is one Basic-auth principal for coarse HTTP ACL (admin vs read-only).

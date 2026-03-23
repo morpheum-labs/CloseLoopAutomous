@@ -419,3 +419,101 @@ func TestRunIdeationAppendsPreferenceHints(t *testing.T) {
 		t.Fatalf("expected category hint in summary: %q", cap.lastSummary)
 	}
 }
+
+type emptyIdeationStub struct{}
+
+func (emptyIdeationStub) GenerateIdeas(context.Context, domain.Product, string) ([]domain.IdeaDraft, error) {
+	return nil, nil
+}
+
+func TestRunIdeationFromSwipeAddsMoreDrafts(t *testing.T) {
+	ctx := context.Background()
+	clock := timeadapter.Fixed{T: time.Unix(1700000000, 0)}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	ideas := memory.NewIdeaStore()
+	prodSvc := &product.Service{Products: products, Clock: clock, IDs: ids}
+	svc := &Service{
+		Products:   products,
+		Ideas:      ideas,
+		Research:   ai.ResearchStub{},
+		Ideation:   ai.IdeationStub{},
+		Clock:      clock,
+		Identities: ids,
+	}
+	p, _ := prodSvc.Register(ctx, product.RegistrationInput{Name: "p", WorkspaceID: "w"})
+	_ = svc.RunResearch(ctx, p.ID)
+	_ = svc.RunIdeation(ctx, p.ID)
+	p1, _ := products.ByID(ctx, p.ID)
+	if p1.Stage != domain.StageSwipe {
+		t.Fatalf("want swipe after first ideation, got %s", p1.Stage)
+	}
+	n1, _ := ideas.ListByProduct(ctx, p.ID)
+	if len(n1) != 1 {
+		t.Fatalf("ideas after first run: %d", len(n1))
+	}
+	if err := svc.RunIdeation(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	n2, _ := ideas.ListByProduct(ctx, p.ID)
+	if len(n2) != 2 {
+		t.Fatalf("ideas after second ideation from swipe: %d", len(n2))
+	}
+	p2, _ := products.ByID(ctx, p.ID)
+	if p2.Stage != domain.StageSwipe {
+		t.Fatalf("want swipe after second ideation, got %s", p2.Stage)
+	}
+}
+
+func TestRunIdeationEmptyDraftsKeepsStage(t *testing.T) {
+	ctx := context.Background()
+	clock := timeadapter.Fixed{T: time.Unix(1700000000, 0)}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	ideas := memory.NewIdeaStore()
+	svc := &Service{
+		Products:   products,
+		Ideas:      ideas,
+		Ideation:   emptyIdeationStub{},
+		Clock:      clock,
+		Identities: ids,
+	}
+	p := &domain.Product{
+		ID: "p1", Name: "n", Stage: domain.StageIdeation, WorkspaceID: "w",
+		ResearchSummary: "s", UpdatedAt: clock.Now(),
+	}
+	_ = products.Save(ctx, p)
+	if err := svc.RunIdeation(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	p2, _ := products.ByID(ctx, p.ID)
+	if p2.Stage != domain.StageIdeation {
+		t.Fatalf("want ideation when no drafts, got %s", p2.Stage)
+	}
+	list, _ := ideas.ListByProduct(ctx, p.ID)
+	if len(list) != 0 {
+		t.Fatalf("want no ideas, got %d", len(list))
+	}
+}
+
+func TestRunIdeationRejectsWrongStage(t *testing.T) {
+	ctx := context.Background()
+	clock := timeadapter.Fixed{T: time.Unix(1700000000, 0)}
+	ids := &identity.Sequential{}
+	products := memory.NewProductStore()
+	svc := &Service{
+		Products:   products,
+		Ideas:      memory.NewIdeaStore(),
+		Ideation:   ai.IdeationStub{},
+		Clock:      clock,
+		Identities: ids,
+	}
+	p := &domain.Product{
+		ID: "p1", Name: "n", Stage: domain.StagePlanning, WorkspaceID: "w",
+		ResearchSummary: "s", UpdatedAt: clock.Now(),
+	}
+	_ = products.Save(ctx, p)
+	if err := svc.RunIdeation(ctx, p.ID); err == nil {
+		t.Fatal("expected error for planning stage")
+	}
+}

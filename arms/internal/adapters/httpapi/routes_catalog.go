@@ -21,7 +21,7 @@ func routeCatalog() []RouteEntry {
 		{"DELETE", "/api/products/{id}", "Soft-delete product (sets deleted_at; hidden from list/get and autopilot); operations_log product.soft_delete; 409 if already deleted"},
 		{"POST", "/api/products/{id}/restore", "Clear soft-delete; operations_log product.restore; 409 if not deleted"},
 		{"POST", "/api/products/{id}/research", "Run research phase"},
-		{"POST", "/api/products/{id}/ideation", "Run ideation phase"},
+		{"POST", "/api/products/{id}/ideation", "Run ideation (product stage ideation or swipe; moves to swipe when new drafts are saved)"},
 		{"GET", "/api/products/{id}/ideas", "List ideas for product"},
 		{"POST", "/api/products/{id}/nlp/tfidf-suggest-tags", "TF-IDF tag suggestions for text or idea_id against other ideas on product (optional extra_corpus); no LLM"},
 		{"POST", "/api/products/{id}/nlp/suggest-idea-id", "Propose unique idea id from spec+statement: TF-IDF tags → slug + numeric suffix free in ideas table; body {spec?, statement?, extra_corpus?, top_k?, min_token_len?, max_slug_tokens?}"},

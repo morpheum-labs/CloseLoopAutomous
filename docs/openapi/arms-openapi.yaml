@@ -880,6 +880,9 @@ paths:
     post:
       tags: [Products]
       summary: Run ideation
+      description: >
+        Allowed when the product stage is ideation (after research) or swipe (generate more drafts during triage).
+        Persists new draft ideas; sets stage to swipe only when at least one draft is saved (no-op runs keep the current stage).
       parameters:
         - $ref: "#/components/parameters/productId"
       responses:

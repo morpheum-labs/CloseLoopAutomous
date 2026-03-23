@@ -52,13 +52,16 @@ func (s *Service) RunResearch(ctx context.Context, productID domain.ProductID) e
 	return nil
 }
 
-// RunIdeation expects product at ideation stage; uses stored research summary from the product.
+// RunIdeation generates draft ideas from stored research (and optional preference hints).
+// It is allowed from ideation (first batch after research) or swipe (additional drafts while triage is open).
+// The product moves to swipe only when at least one new idea is saved; otherwise stage is unchanged
+// (avoids an empty swipe queue after a no-op ideation run).
 func (s *Service) RunIdeation(ctx context.Context, productID domain.ProductID) error {
 	p, err := s.Products.ByID(ctx, productID)
 	if err != nil {
 		return err
 	}
-	if p.Stage != domain.StageIdeation {
+	if p.Stage != domain.StageIdeation && p.Stage != domain.StageSwipe {
 		return fmt.Errorf("%w: product stage is %s", domain.ErrInvalidTransition, p.Stage.String())
 	}
 	researchIn := strings.TrimSpace(p.ResearchSummary)
@@ -119,7 +122,9 @@ func (s *Service) RunIdeation(ctx context.Context, productID domain.ProductID) e
 			return err
 		}
 	}
-	p.Stage = domain.StageSwipe
+	if len(drafts) > 0 {
+		p.Stage = domain.StageSwipe
+	}
 	p.UpdatedAt = now
 	return s.Products.Save(ctx, p)
 }

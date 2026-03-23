@@ -236,7 +236,7 @@ export function WorkspaceHeaderBar({ missionControl = null, onOpenAbout }: Props
         </span>
         <BackendConnectionPill isOnline={isOnline} />
         <ThemeCycleButton />
-        <button type="button" className="ft-btn-icon" title="Autopilot" onClick={() => navigate('/autopilot')}>
+        <button type="button" className="ft-btn-icon" title="Autopilot hub (placeholder)" onClick={() => navigate('/autopilot')}>
           <Rocket size={20} />
         </button>
         <button type="button" className="ft-btn-icon" title="Activity / operations log" onClick={() => navigate('/activity')}>

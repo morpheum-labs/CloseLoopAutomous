@@ -29,7 +29,7 @@ const NAV_ENTRIES: NavEntry[] = [
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, kind: 'workspace', segment: 'tasks' },
   { id: 'agents', label: 'Agents', icon: Bot, kind: 'workspace', segment: 'agents' },
   { id: 'activity_log', label: 'Activity log', icon: Activity, kind: 'global', to: '/activity' },
-  { id: 'autopilot', label: 'Autopilot', icon: Rocket, kind: 'global', to: '/autopilot' },
+  { id: 'autopilot', label: 'Autopilot hub', icon: Rocket, kind: 'global', to: '/autopilot' },
   { id: 'content', label: 'Content', icon: FileText, kind: 'workspace', segment: 'content' },
   { id: 'ideation', label: 'Ideation', icon: Lightbulb, kind: 'workspace', segment: 'ideation' },
   { id: 'approvals', label: 'Approvals', icon: ClipboardCheck, kind: 'workspace', segment: 'approvals' },

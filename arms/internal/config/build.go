@@ -21,8 +21,12 @@ func buildConfig(file map[string]string) Config {
 	dbPath := strings.TrimSpace(s.getenv("DATABASE_PATH"))
 	backup := strings.EqualFold(s.getenv("ARMS_DB_BACKUP"), "1") ||
 		strings.EqualFold(s.getenv("ARMS_DB_BACKUP"), "true")
+	agDriver := strings.TrimSpace(s.getenv("ARMS_AGENT_GATEWAY_DRIVER"))
 	ocURL := strings.TrimSpace(s.getenv("OPENCLAW_GATEWAY_URL"))
 	ocTok := strings.TrimSpace(s.getenv("OPENCLAW_GATEWAY_TOKEN"))
+	ncURL := strings.TrimSpace(s.getenv("NULLCLAW_GATEWAY_URL"))
+	ncTok := strings.TrimSpace(s.getenv("NULLCLAW_GATEWAY_TOKEN"))
+	ncSess := strings.TrimSpace(s.getenv("ARMS_NULLCLAW_SESSION_KEY"))
 	dt := 30 * time.Second
 	if v := strings.TrimSpace(s.getenv("OPENCLAW_DISPATCH_TIMEOUT_SEC")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -148,6 +152,29 @@ func buildConfig(file map[string]string) Config {
 	chromemOpenAIKey := strings.TrimSpace(s.getenv("ARMS_CHROMEM_OPENAI_API_KEY"))
 	chromemOpenAIModel := strings.TrimSpace(s.getenv("ARMS_CHROMEM_OPENAI_MODEL"))
 
+	llmBase := strings.TrimSpace(s.getenv("ARMS_LLM_BASE_URL"))
+	if llmBase == "" {
+		llmBase = "https://api.openai.com/v1"
+	}
+	llmKey := strings.TrimSpace(s.getenv("ARMS_LLM_API_KEY"))
+	if llmKey == "" {
+		llmKey = strings.TrimSpace(s.getenv("OPENAI_API_KEY"))
+	}
+	researchLLMModel := strings.TrimSpace(s.getenv("ARMS_RESEARCH_LLM_MODEL"))
+	ideationLLMModel := strings.TrimSpace(s.getenv("ARMS_IDEATION_LLM_MODEL"))
+	researchLLMTimeout := 120 * time.Second
+	if v := strings.TrimSpace(s.getenv("ARMS_RESEARCH_LLM_TIMEOUT_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			researchLLMTimeout = time.Duration(n) * time.Second
+		}
+	}
+	ideationLLMTimeout := 180 * time.Second
+	if v := strings.TrimSpace(s.getenv("ARMS_IDEATION_LLM_TIMEOUT_SEC")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ideationLLMTimeout = time.Duration(n) * time.Second
+		}
+	}
+
 	return Config{
 		ListenAddr:                        addr,
 		MCAPIToken:                        strings.TrimSpace(token),
@@ -155,11 +182,15 @@ func buildConfig(file map[string]string) Config {
 		AllowLocalhost:                    allow,
 		DatabasePath:                      dbPath,
 		DatabaseBackupBeforeMigrate:       backup,
+		AgentGatewayDriver:                agDriver,
 		OpenClawGatewayURL:                ocURL,
 		OpenClawGatewayToken:              ocTok,
 		OpenClawDispatchTimeout:           dt,
 		ArmsDeviceID:                      device,
 		OpenClawSessionKey:                sessionKey,
+		NullClawGatewayURL:                ncURL,
+		NullClawGatewayToken:              ncTok,
+		NullClawSessionKey:                ncSess,
 		LogJSON:                           logJSON,
 		AccessLog:                         accessLog,
 		AutopilotTickSec:                  autopilotTick,
@@ -199,5 +230,11 @@ func buildConfig(file map[string]string) Config {
 		ChromemOllamaBaseURL:              chromemOllamaBase,
 		ChromemOpenAIAPIKey:               chromemOpenAIKey,
 		ChromemOpenAIModel:                chromemOpenAIModel,
+		LLMBaseURL:                        llmBase,
+		LLMAPIKey:                         llmKey,
+		ResearchLLMModel:                  researchLLMModel,
+		ResearchLLMTimeout:                researchLLMTimeout,
+		IdeationLLMModel:                  ideationLLMModel,
+		IdeationLLMTimeout:                ideationLLMTimeout,
 	}
 }

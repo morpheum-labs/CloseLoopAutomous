@@ -18,8 +18,9 @@ import (
 	"github.com/closeloopautomous/arms/internal/ports"
 )
 
-// Options configure the OpenClaw gateway WebSocket client.
-// Wire format matches Mission Control’s src/lib/openclaw/client.ts (RequestFrame / ResponseFrame).
+// Options configure the WebSocket gateway client for OpenClaw-class protocols
+// (RequestFrame / ResponseFrame, chat.send). The same client is used for NullClaw when its gateway
+// remains compatible; see https://github.com/nullclaw/nullclaw gateway documentation.
 type Options struct {
 	URL      string
 	Token    string

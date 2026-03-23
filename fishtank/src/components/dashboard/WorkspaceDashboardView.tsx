@@ -53,9 +53,9 @@ export function WorkspaceDashboardView() {
                 <RefreshCw size={16} className={listLoading ? 'ft-spin' : ''} />
                 Refresh
               </button>
-              <button type="button" className="ft-btn-ghost" onClick={() => navigate('/autopilot')} title="Autopilot">
+              <button type="button" className="ft-btn-ghost" onClick={() => navigate('/autopilot')} title="Autopilot hub (placeholder)">
                 <Rocket size={16} />
-                Autopilot
+                Autopilot hub
               </button>
               <button type="button" className="ft-btn-ghost" onClick={() => navigate('/activity')} title="Operations log">
                 <Activity size={16} />

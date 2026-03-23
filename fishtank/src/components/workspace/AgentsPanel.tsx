@@ -48,8 +48,10 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem', minHeight: 0 }}>
         {list.length === 0 ? (
-          <p className="ft-muted" style={{ fontSize: '0.75rem', padding: '0.5rem' }}>
-            No agent heartbeats for this product (or agent health is disabled on the server).
+          <p className="ft-muted" style={{ fontSize: '0.75rem', padding: '0.5rem', lineHeight: 1.5 }}>
+            No task heartbeats yet for this product. Rows appear when something reports liveness for a task (see{' '}
+            <code className="ft-mono">PATCH /api/tasks/…/agent-health</code>, dispatch/complete flows, or your agent runtime).
+            If arms returns 503 for agent-health, persistence may be off (e.g. in-memory server without SQLite).
           </p>
         ) : (
           list.map((agent) => <AgentRow key={agent.id} agent={agent} />)
@@ -69,7 +71,7 @@ function AgentRow({ agent }: { agent: Agent }) {
           {agent.name}
         </div>
         <div style={{ fontSize: '0.65rem' }} className="ft-muted">
-          OpenClaw session (demo)
+          From task agent-health (liveness)
         </div>
       </div>
       <span className={badge.className}>{badge.label}</span>

@@ -137,14 +137,7 @@ func buildHandlers(
 	if !cfg.KnowledgeDisableDispatchInjection {
 		knowHook = knowSvc.DispatchHook()
 	}
-	agentGW, gwCleanup := gw.NewAgentGateway(
-		cfg.OpenClawGatewayURL,
-		cfg.OpenClawGatewayToken,
-		cfg.ArmsDeviceID,
-		cfg.OpenClawSessionKey,
-		cfg.OpenClawDispatchTimeout,
-		knowHook,
-	)
+	agentGW, gwCleanup := gw.NewFromConfig(cfg, knowHook)
 
 	budgetPolicy := &budget.Composite{
 		Costs:             costs,
@@ -154,6 +147,31 @@ func buildHandlers(
 	}
 
 	productSvc := &product.Service{Products: products, Clock: clock, IDs: ids}
+
+	llmChat := &ai.ChatClient{
+		BaseURL: cfg.LLMBaseURL,
+		APIKey:  cfg.LLMAPIKey,
+		HTTP:    ai.DefaultHTTPClient(),
+	}
+	researchPort := ports.ResearchPort(ai.ResearchStub{})
+	if strings.TrimSpace(cfg.ResearchLLMModel) != "" {
+		researchPort = &ai.ResearchLLM{
+			Client:  llmChat,
+			Model:   strings.TrimSpace(cfg.ResearchLLMModel),
+			Timeout: cfg.ResearchLLMTimeout,
+		}
+		slog.Info("arms autopilot", "research_llm", cfg.ResearchLLMModel, "base", cfg.LLMBaseURL)
+	}
+	ideationPort := ports.IdeationPort(ai.IdeationStub{})
+	if strings.TrimSpace(cfg.IdeationLLMModel) != "" {
+		ideationPort = &ai.IdeationLLM{
+			Client:  llmChat,
+			Model:   strings.TrimSpace(cfg.IdeationLLMModel),
+			Timeout: cfg.IdeationLLMTimeout,
+		}
+		slog.Info("arms autopilot", "ideation_llm", cfg.IdeationLLMModel, "base", cfg.LLMBaseURL)
+	}
+
 	autoSvc := &autopilot.Service{
 		Products:       products,
 		Ideas:          ideas,
@@ -163,8 +181,8 @@ func buildHandlers(
 		ResearchCycles: researchCycles,
 		Schedules:      productSchedules,
 		PrefModel:      preferenceModels,
-		Research:       ai.ResearchStub{},
-		Ideation:       ai.IdeationStub{},
+		Research:       researchPort,
+		Ideation:       ideationPort,
 		Clock:          clock,
 		Identities:     ids,
 	}

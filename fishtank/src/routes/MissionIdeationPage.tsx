@@ -23,12 +23,7 @@ type SopWorkshopProps = {
     category?: string | null,
   ) => Promise<void>;
   onQueueSuccess: () => void;
-  researchEnabled: boolean;
-  researchBusy: boolean;
   pipelineBusy: boolean;
-  pipelineLoading: boolean;
-  pipelineStage: string;
-  onRunResearch: () => void;
 };
 
 function IdeationSopWorkshop({
@@ -38,12 +33,7 @@ function IdeationSopWorkshop({
   client,
   createTaskForProduct,
   onQueueSuccess,
-  researchEnabled,
-  researchBusy,
   pipelineBusy,
-  pipelineLoading,
-  pipelineStage,
-  onRunResearch,
 }: SopWorkshopProps) {
   const buckets = useIdeationBuckets();
   const [step, setStep] = useState(0);
@@ -191,12 +181,10 @@ function IdeationSopWorkshop({
         <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Structured ideation SOPs</h2>
       </div>
       <p className="ft-muted" style={{ margin: '0 0 0.85rem', fontSize: '0.8rem', lineHeight: 1.5, maxWidth: '48rem' }}>
-        Four one-page workflows. Mission & Vision are the highest-weighted filter — display them in step one and score
-        alignment before anything ships. When you are ready, submit the winning concept to the product queue (creates an
-        auto-approved manual idea + planning task via{' '}
-        <code className="ft-mono">POST /api/tasks</code> with <code className="ft-mono">product_id</code>,{' '}
-        <code className="ft-mono">new_idea_id</code>, and <code className="ft-mono">category</code> set to an ideation-bucket
-        slug).
+        Choose an <strong>ideation bucket</strong> (sets <code className="ft-mono">category</code>). Use{' '}
+        <strong>Submit to queue</strong> for a vetted concept — available in <strong>every</strong> stage, creates a planning
+        task and skips the swipe deck. The workshop below is optional structure for live sessions. For AI-generated drafts and
+        research, use <a href="#autopilot-pipeline">Guided research &amp; drafts</a> below.
       </p>
 
       <div
@@ -296,8 +284,114 @@ function IdeationSopWorkshop({
         </div>
       </label>
 
+      <hr
+        style={{
+          margin: '1rem 0',
+          border: 'none',
+          borderTop: '1px solid var(--mc-border-subtle, rgba(255,255,255,0.08))',
+        }}
+      />
+
+      <div
+        id="manual-idea-queue"
+        style={{
+          padding: '0.75rem 0.85rem',
+          borderRadius: 10,
+          marginBottom: '1rem',
+          background: 'var(--mc-surface, rgba(0,0,0,0.14))',
+          border: '1px solid var(--mc-border-subtle, rgba(120, 180, 255, 0.22))',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.5rem' }}>
+          <Sparkles size={16} className="ft-muted" aria-hidden />
+          <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>Submit your idea (always on)</h3>
+        </div>
+        <p className="ft-muted" style={{ margin: '0 0 0.65rem', fontSize: '0.76rem', lineHeight: 1.45 }}>
+          <strong>Manual path</strong> — no stage gate. Add a spec and idea id, then submit. First line of the spec is usually
+          the title. Opens a planning task on <Link to={`/p/${encodeURIComponent(productId)}/tasks`}>Tasks</Link> for approval
+          and dispatch. This is separate from autopilot (research / AI drafts) in the section below.
+        </p>
+
+        {workshopError ? (
+          <p className="ft-banner ft-banner--error" role="alert" style={{ fontSize: '0.8rem', marginBottom: '0.65rem' }}>
+            {workshopError}
+          </p>
+        ) : null}
+
+        <label className="ft-field" style={{ display: 'block', marginBottom: '0.65rem' }}>
+          <span className="ft-field-label">Final spec (aligned concept)</span>
+          <textarea
+            className="ft-input"
+            rows={7}
+            value={captureSpec}
+            onChange={(e) => setCaptureSpec(e.target.value)}
+            disabled={submitBusy || pipelineBusy}
+            placeholder="One-line title&#10;Paragraph: problem, alignment to Mission/Vision, success signal…"
+            style={{ resize: 'vertical', width: '100%', minHeight: '140px' }}
+          />
+        </label>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '0.65rem' }}>
+          <label className="ft-field" style={{ flex: '1 1 12rem', minWidth: 0 }}>
+            <span className="ft-field-label">Idea id</span>
+            <input
+              className="ft-input"
+              type="text"
+              value={manualIdeaId}
+              onChange={(e) => setManualIdeaId(e.target.value)}
+              disabled={submitBusy || pipelineBusy}
+              placeholder="e.g. my-feature-idea"
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            className="ft-btn-ghost"
+            style={{ fontSize: '0.78rem' }}
+            disabled={suggestBusy || submitBusy || pipelineBusy}
+            onClick={() => void runSuggestId()}
+          >
+            {suggestBusy ? 'Suggesting…' : 'Suggest id from spec'}
+          </button>
+        </div>
+
+        {suggestedIdeaId ? (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              marginBottom: '0.75rem',
+              fontSize: '0.76rem',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={useSuggestedId}
+              onChange={(e) => setUseSuggestedId(e.target.checked)}
+              disabled={submitBusy || pipelineBusy}
+            />
+            <span>
+              Use suggested id: <span className="ft-mono">{suggestedIdeaId}</span>
+            </span>
+          </label>
+        ) : null}
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem' }}>
+          <button
+            type="button"
+            className="ft-btn-primary"
+            disabled={submitBusy || pipelineBusy || !canSubmitToQueue}
+            onClick={() => void submitToQueue()}
+          >
+            {submitBusy ? 'Submitting…' : 'Submit to queue'}
+          </button>
+        </div>
+      </div>
+
       <p style={{ margin: '0 0 0.4rem', fontSize: '0.72rem', fontWeight: 600, letterSpacing: '0.04em', opacity: 0.85 }}>
-        HOW TO USE THE SYSTEM
+        STRUCTURED SOP WORKSHOP (OPTIONAL) — HOW TO USE
       </p>
       <ol className="ft-muted" style={{ margin: '0 0 1rem', paddingLeft: '1.2rem', fontSize: '0.78rem', lineHeight: 1.55 }}>
         {IDEATION_SOP_SYSTEM_STEPS.map((t) => (
@@ -411,119 +505,13 @@ function IdeationSopWorkshop({
         </button>
       </div>
 
-      <hr
-        style={{
-          margin: '1.15rem 0',
-          border: 'none',
-          borderTop: '1px solid var(--mc-border-subtle, rgba(255,255,255,0.08))',
-        }}
-      />
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.5rem' }}>
-        <Sparkles size={16} className="ft-muted" aria-hidden />
-        <h3 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 600 }}>Submit aligned idea to queue</h3>
-      </div>
-      <p className="ft-muted" style={{ margin: '0 0 0.65rem', fontSize: '0.76rem', lineHeight: 1.45 }}>
-        Only pass ideas that score high on Mission/Vision alignment. The bucket is set above; add a non-empty spec and an
-        idea id (type one or use <strong>Suggest id from spec</strong> and leave it checked). First line of the spec is
-        typically the title. Then open <Link to={`/p/${encodeURIComponent(productId)}/tasks`}>Tasks</Link> to plan and
-        dispatch.
+      <p className="ft-muted" style={{ margin: '0.85rem 0 0', fontSize: '0.72rem', lineHeight: 1.45 }}>
+        To capture a vetted idea after the workshop, use{' '}
+        <a href="#manual-idea-queue" style={{ color: 'inherit', textDecoration: 'underline' }}>
+          Submit your idea (always on)
+        </a>{' '}
+        above — it is available in every pipeline stage.
       </p>
-
-      {workshopError ? (
-        <p className="ft-banner ft-banner--error" role="alert" style={{ fontSize: '0.8rem', marginBottom: '0.65rem' }}>
-          {workshopError}
-        </p>
-      ) : null}
-
-      <label className="ft-field" style={{ display: 'block', marginBottom: '0.65rem' }}>
-        <span className="ft-field-label">Final spec (aligned concept)</span>
-        <textarea
-          className="ft-input"
-          rows={7}
-          value={captureSpec}
-          onChange={(e) => setCaptureSpec(e.target.value)}
-          disabled={submitBusy || pipelineBusy}
-          placeholder="One-line title&#10;Paragraph: problem, alignment to Mission/Vision, success signal…"
-          style={{ resize: 'vertical', width: '100%', minHeight: '140px' }}
-        />
-      </label>
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '0.65rem' }}>
-        <label className="ft-field" style={{ flex: '1 1 12rem', minWidth: 0 }}>
-          <span className="ft-field-label">Idea id</span>
-          <input
-            className="ft-input"
-            type="text"
-            value={manualIdeaId}
-            onChange={(e) => setManualIdeaId(e.target.value)}
-            disabled={submitBusy || pipelineBusy}
-            placeholder="e.g. my-feature-idea"
-            autoComplete="off"
-          />
-        </label>
-        <button
-          type="button"
-          className="ft-btn-ghost"
-          style={{ fontSize: '0.78rem' }}
-          disabled={suggestBusy || submitBusy || pipelineBusy}
-          onClick={() => void runSuggestId()}
-        >
-          {suggestBusy ? 'Suggesting…' : 'Suggest id from spec'}
-        </button>
-      </div>
-
-      {suggestedIdeaId ? (
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.45rem',
-            marginBottom: '0.75rem',
-            fontSize: '0.76rem',
-            cursor: 'pointer',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={useSuggestedId}
-            onChange={(e) => setUseSuggestedId(e.target.checked)}
-            disabled={submitBusy || pipelineBusy}
-          />
-          <span>
-            Use suggested id: <span className="ft-mono">{suggestedIdeaId}</span>
-          </span>
-        </label>
-      ) : null}
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem' }}>
-        <button
-          type="button"
-          className="ft-btn-primary"
-          disabled={!researchEnabled || pipelineBusy}
-          onClick={() => void onRunResearch()}
-        >
-          {researchBusy ? 'Running research…' : 'Run research'}
-        </button>
-        <button
-          type="button"
-          className="ft-btn-primary"
-          disabled={submitBusy || pipelineBusy || !canSubmitToQueue}
-          onClick={() => void submitToQueue()}
-        >
-          {submitBusy ? 'Submitting…' : 'Submit to queue'}
-        </button>
-      </div>
-      {!researchEnabled && !pipelineBusy && !pipelineLoading && pipelineStage !== 'research' ? (
-        <p className="ft-muted" style={{ margin: '0.5rem 0 0', fontSize: '0.72rem', lineHeight: 1.45 }}>
-          Run research is only available when pipeline stage is <code className="ft-mono">research</code>.
-        </p>
-      ) : null}
-      {pipelineStage === 'research' && !researchEnabled && !researchBusy && !pipelineLoading ? (
-        <p className="ft-muted" style={{ margin: '0.5rem 0 0', fontSize: '0.72rem' }}>
-          Wait for the current pipeline action to finish.
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -626,21 +614,112 @@ function ideaNeedsSwipe(i: ApiIdea): boolean {
   return true;
 }
 
+type FlowStepState = 'past' | 'current' | 'upcoming';
+
+function autopilotFlowStepStates(stage: string): { research: FlowStepState; drafts: FlowStepState; delivery: FlowStepState } {
+  const s = stage.trim().toLowerCase();
+  if (s === 'research') return { research: 'current', drafts: 'upcoming', delivery: 'upcoming' };
+  if (s === 'ideation' || s === 'swipe') return { research: 'past', drafts: 'current', delivery: 'upcoming' };
+  if (s === 'planning' || s === 'execution' || s === 'review' || s === 'shipped') {
+    return { research: 'past', drafts: 'past', delivery: 'current' };
+  }
+  return { research: 'upcoming', drafts: 'upcoming', delivery: 'upcoming' };
+}
+
+function AutopilotFlowStepper({ stage }: { stage: string }) {
+  const st = autopilotFlowStepStates(stage);
+  const items: { key: string; title: string; hint: string; state: FlowStepState }[] = [
+    {
+      key: 'research',
+      title: '1 · Research',
+      hint: 'Gather context on the product',
+      state: st.research,
+    },
+    {
+      key: 'drafts',
+      title: '2 · Drafts & swipe',
+      hint: 'Run ideation, then triage on Approvals',
+      state: st.drafts,
+    },
+    {
+      key: 'delivery',
+      title: '3 · Plan & build',
+      hint: 'Tasks: approve plan, assign, ship',
+      state: st.delivery,
+    },
+  ];
+  return (
+    <div
+      role="list"
+      aria-label="Guided research and drafts flow"
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'stretch',
+        gap: '0.35rem',
+        marginTop: '0.75rem',
+        fontSize: '0.72rem',
+      }}
+    >
+      {items.map((it, i) => {
+        const isCurrent = it.state === 'current';
+        const isPast = it.state === 'past';
+        return (
+          <div key={it.key} role="listitem" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flex: '1 1 7rem' }}>
+            {i > 0 ? (
+              <span className="ft-muted" aria-hidden style={{ opacity: 0.45, flex: '0 0 auto' }}>
+                →
+              </span>
+            ) : null}
+            <div
+              style={{
+                flex: '1 1 auto',
+                minWidth: 0,
+                padding: '0.45rem 0.55rem',
+                borderRadius: 8,
+                border: `1px solid ${
+                  isCurrent
+                    ? 'var(--mc-accent-border, rgba(120, 180, 255, 0.45))'
+                    : 'var(--mc-border-subtle, rgba(255,255,255,0.08))'
+                }`,
+                background: isCurrent
+                  ? 'var(--mc-surface, rgba(80, 140, 255, 0.12))'
+                  : 'var(--mc-surface, rgba(0,0,0,0.14))',
+                opacity: it.state === 'upcoming' ? 0.72 : 1,
+              }}
+            >
+              <div style={{ fontWeight: 600, letterSpacing: '0.02em' }}>
+                {it.title}
+                {isPast ? <span className="ft-muted"> · done</span> : null}
+                {isCurrent ? <span className="ft-muted"> · now</span> : null}
+              </div>
+              <div className="ft-muted" style={{ marginTop: '0.2rem', lineHeight: 1.4 }}>
+                {it.hint}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function stageDescription(stage: string): string {
   switch (stage) {
     case 'research':
-      return 'Run research first (button next to Submit to queue below). When it finishes, the product moves to ideation and you can generate ideas.';
+      return 'Start here: run Research once. When it finishes, the product moves to ideation and the Run ideation button unlocks.';
     case 'ideation':
-      return 'Research is saved on this product. Run ideation to create draft ideas, then review them on Approvals.';
+      return 'Run ideation to add AI draft ideas, then open Approvals to swipe. You can run ideation again while still in ideation or swipe to refresh drafts.';
     case 'swipe':
-      return 'New drafts are on the swipe queue. Open Approvals to pass, maybe, yes, or now.';
+      return 'Triage drafts on Approvals. Run ideation again anytime in this stage to generate more drafts.';
     case 'planning':
+      return `Autopilot ideation is done for this cycle. Continue on Tasks — approve the plan, then assign and dispatch. The stage badge may stay "planning" while work moves on the task board.`;
     case 'execution':
     case 'review':
     case 'shipped':
-      return 'Autopilot has moved past the ideation step for this cycle. Run research again only when the product returns to the research stage.';
+      return 'Delivery track — progress is on the task board and merge flow, not on this page.';
     default:
-      return 'Check the current stage below before running pipeline actions.';
+      return 'Refresh after loading. Use Manual submit above anytime; autopilot buttons follow the stage badge.';
   }
 }
 
@@ -722,7 +801,8 @@ export function MissionIdeationPage() {
 
   const loading = ideasLoading || boardLoading;
   const researchEnabled = stage === 'research' && !actionBusy && !loading;
-  const ideationEnabled = stage === 'ideation' && !actionBusy && !loading;
+  const ideationStageOk = stage === 'ideation' || stage === 'swipe';
+  const ideationEnabled = ideationStageOk && !actionBusy && !loading;
 
   return (
     <div className="ft-queue-flex" style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', padding: '1rem 1.25rem' }}>
@@ -735,12 +815,15 @@ export function MissionIdeationPage() {
               </span>
               <div>
                 <h1 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>Ideation</h1>
-                <p className="ft-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', lineHeight: 1.45, maxWidth: '40rem' }}>
-                  Drive autopilot ideation from the pipeline card; run on-demand research next to{' '}
-                  <strong>Submit to queue</strong> below. Calls <code className="ft-mono">POST /api/products/…/research</code> and{' '}
-                  <code className="ft-mono">POST /api/products/…/ideation</code>. After ideation, open{' '}
-                  <Link to={`/p/${encodeURIComponent(pid)}/approvals`}>Approvals</Link>{' '}
-                  to swipe new drafts.
+                <p className="ft-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', lineHeight: 1.45, maxWidth: '42rem' }}>
+                  <strong>Manual</strong> — use <strong>Submit your idea</strong> in the first panel; it works in every stage.
+                  <strong>Guided research &amp; drafts</strong> — use the{' '}
+                  <a href="#autopilot-pipeline" style={{ color: 'inherit' }}>
+                    section below
+                  </a>
+                  ; buttons follow the stage badge. Sidebar <strong>Autopilot hub</strong> is unrelated (global placeholder).
+                  Triage drafts on{' '}
+                  <Link to={`/p/${encodeURIComponent(pid)}/approvals`}>Approvals</Link>.
                 </p>
               </div>
             </div>
@@ -763,17 +846,29 @@ export function MissionIdeationPage() {
           </p>
         ) : null}
 
+        <IdeationSopWorkshop
+          productId={pid}
+          mission={productDetail?.mission_statement}
+          vision={productDetail?.vision_statement}
+          client={client}
+          createTaskForProduct={createTaskForProduct}
+          onQueueSuccess={() => void refreshAll()}
+          pipelineBusy={actionBusy != null}
+        />
+
         <section
+          id="autopilot-pipeline"
           className="ft-panel"
           style={{
             borderRadius: 12,
             border: '1px solid var(--mc-border-subtle, rgba(255,255,255,0.08))',
             padding: '1rem 1.1rem',
             background: 'var(--mc-surface-raised, rgba(255,255,255,0.03))',
+            scrollMarginTop: '0.75rem',
           }}
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem' }}>
-            <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Pipeline stage</h2>
+            <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Guided research &amp; drafts</h2>
             <span
               className="ft-mono"
               style={{
@@ -783,51 +878,66 @@ export function MissionIdeationPage() {
                 background: 'var(--mc-surface, rgba(0,0,0,0.2))',
                 border: '1px solid var(--mc-border-subtle, rgba(255,255,255,0.08))',
               }}
+              title="Product pipeline stage — controls which autopilot actions are allowed"
             >
-              {stage || '…'}
+              stage: {stage || '…'}
             </span>
           </div>
-          <p className="ft-muted" style={{ margin: '0.6rem 0 0', fontSize: '0.82rem', lineHeight: 1.5 }}>
+          <p className="ft-muted" style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', lineHeight: 1.5 }}>
+            Product-level autopilot: ordered steps below. Only the action that matches the current stage is enabled — separate
+            from <strong>Submit your idea</strong>, which is always available above.
+          </p>
+          <AutopilotFlowStepper stage={stage} />
+          <p className="ft-muted" style={{ margin: '0.75rem 0 0', fontSize: '0.82rem', lineHeight: 1.5 }}>
             {stageDescription(stage)}
           </p>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', marginTop: '1rem' }}>
-            <button
-              type="button"
-              className="ft-btn-primary"
-              disabled={!ideationEnabled}
-              onClick={() => void runIdeation()}
-            >
-              {actionBusy === 'ideation' ? 'Running ideation…' : 'Run ideation'}
-            </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', marginTop: '1rem', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: '10rem' }}>
+              <button
+                type="button"
+                className="ft-btn-primary"
+                disabled={!researchEnabled}
+                onClick={() => void runResearch()}
+              >
+                {actionBusy === 'research' ? 'Running research…' : 'Run research'}
+              </button>
+              <span className="ft-muted" style={{ fontSize: '0.72rem', lineHeight: 1.45, maxWidth: '18rem' }}>
+                Unlocks when stage is <code className="ft-mono">research</code>.
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: '10rem' }}>
+              <button
+                type="button"
+                className="ft-btn-primary"
+                disabled={!ideationEnabled}
+                onClick={() => void runIdeation()}
+              >
+                {actionBusy === 'ideation' ? 'Running ideation…' : 'Run ideation'}
+              </button>
+              <span className="ft-muted" style={{ fontSize: '0.72rem', lineHeight: 1.45, maxWidth: '18rem' }}>
+                Unlocks when stage is <code className="ft-mono">ideation</code> or <code className="ft-mono">swipe</code>.
+              </span>
+            </div>
           </div>
-          {!ideationEnabled && stage !== 'ideation' && stage !== 'research' ? (
+          {stage === 'research' && !researchEnabled && !loading && actionBusy !== 'research' ? (
             <p className="ft-muted" style={{ margin: '0.75rem 0 0', fontSize: '0.78rem' }}>
-              Run ideation only in the <code className="ft-mono">ideation</code> stage. Run research from the SOP section
-              next to <strong>Submit to queue</strong> when stage is <code className="ft-mono">research</code>.
+              Wait for the page to finish loading, then run research.
             </p>
           ) : null}
-          {stage === 'ideation' && !ideationEnabled && !loading ? (
+          {['planning', 'execution', 'review', 'shipped'].includes(stage) && !loading && actionBusy == null ? (
             <p className="ft-muted" style={{ margin: '0.75rem 0 0', fontSize: '0.78rem' }}>
-              Finish loading or wait for the current action to complete.
+              Research and ideation buttons stay off in this stage — continue on{' '}
+              <Link to={`/p/${encodeURIComponent(pid)}/tasks`}>Tasks</Link>. Use <strong>Submit your idea</strong> above if you
+              still need a manual queue entry.
+            </p>
+          ) : null}
+          {ideationStageOk && !ideationEnabled && !loading ? (
+            <p className="ft-muted" style={{ margin: '0.75rem 0 0', fontSize: '0.78rem' }}>
+              Finish loading or wait for the current action to complete before running ideation again.
             </p>
           ) : null}
         </section>
-
-        <IdeationSopWorkshop
-          productId={pid}
-          mission={productDetail?.mission_statement}
-          vision={productDetail?.vision_statement}
-          client={client}
-          createTaskForProduct={createTaskForProduct}
-          onQueueSuccess={() => void refreshAll()}
-          researchEnabled={researchEnabled}
-          researchBusy={actionBusy === 'research'}
-          pipelineBusy={actionBusy != null}
-          pipelineLoading={loading}
-          pipelineStage={stage}
-          onRunResearch={() => void runResearch()}
-        />
 
         <section>
           <h2 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 600 }}>Ideas on this product</h2>
