@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/clawlet"
+	"github.com/closeloopautomous/arms/internal/adapters/gateway/copaw"
+	"github.com/closeloopautomous/arms/internal/adapters/gateway/inkos"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/ironclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/mimiclaw"
 	"github.com/closeloopautomous/arms/internal/adapters/gateway/mistermorph"
@@ -30,9 +32,11 @@ type clientPool struct {
 	picoclaw       map[string]*picoclaw.Client
 	mimiclaw       map[string]*mimiclaw.Client
 	nanobotCLI     map[string]*nanobotcli.Client
+	inkosCLI       map[string]*inkos.Client
 	nullclawHTTP   map[string]*nullclaw.Client
 	zclawRelay     map[string]*zclaw.Client
 	misterMorph    map[string]*mistermorph.Client
+	copawHTTP      map[string]*copaw.Client
 	nemoclawWS     map[string]*nemoclaw.Client
 	nemo           nemoclaw.PoolSettings
 	knowledge      func(context.Context, domain.ProductID, string) (string, error)
@@ -48,9 +52,11 @@ func newClientPool(knowledge func(context.Context, domain.ProductID, string) (st
 		picoclaw:       make(map[string]*picoclaw.Client),
 		mimiclaw:       make(map[string]*mimiclaw.Client),
 		nanobotCLI:     make(map[string]*nanobotcli.Client),
+		inkosCLI:       make(map[string]*inkos.Client),
 		nullclawHTTP:   make(map[string]*nullclaw.Client),
 		zclawRelay:     make(map[string]*zclaw.Client),
 		misterMorph:    make(map[string]*mistermorph.Client),
+		copawHTTP:      make(map[string]*copaw.Client),
 		nemoclawWS:     make(map[string]*nemoclaw.Client),
 		nemo:           nemo,
 		knowledge:      knowledge,
@@ -300,6 +306,31 @@ func (p *clientPool) zclawClientFor(target domain.DispatchTarget) *zclaw.Client 
 	return c
 }
 
+func (p *clientPool) inkosCLIClientFor(target domain.DispatchTarget) *inkos.Client {
+	to := target.Timeout
+	if to <= 0 {
+		to = p.defaultTimeout
+	}
+	if to <= 0 {
+		to = 30 * time.Second
+	}
+	k := p.key(target)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.inkosCLI[k]; ok {
+		return c
+	}
+	c := inkos.New(inkos.Options{
+		InkOSBin:             target.GatewayToken,
+		Workspace:            target.GatewayURL,
+		BookID:               target.DeviceID,
+		Timeout:              to,
+		KnowledgeForDispatch: p.knowledge,
+	})
+	p.inkosCLI[k] = c
+	return c
+}
+
 func (p *clientPool) nanobotCLIClientFor(target domain.DispatchTarget) *nanobotcli.Client {
 	to := target.Timeout
 	if to <= 0 {
@@ -350,6 +381,31 @@ func (p *clientPool) mistermorphClientFor(target domain.DispatchTarget) *misterm
 	return c
 }
 
+func (p *clientPool) copawClientFor(target domain.DispatchTarget) *copaw.Client {
+	to := target.Timeout
+	if to <= 0 {
+		to = p.defaultTimeout
+	}
+	if to <= 0 {
+		to = 30 * time.Second
+	}
+	k := p.key(target)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.copawHTTP[k]; ok {
+		return c
+	}
+	c := copaw.New(copaw.Options{
+		BaseURL:              target.GatewayURL,
+		Token:                target.GatewayToken,
+		Workspace:            target.DeviceID,
+		Timeout:              to,
+		KnowledgeForDispatch: p.knowledge,
+	})
+	p.copawHTTP[k] = c
+	return c
+}
+
 func (p *clientPool) dispatchTask(ctx context.Context, target domain.DispatchTarget, task domain.Task) (string, error) {
 	switch target.Driver {
 	case domain.GatewayDriverPicoClawWS:
@@ -366,10 +422,14 @@ func (p *clientPool) dispatchTask(ctx context.Context, target domain.DispatchTar
 		return p.ironclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	case domain.GatewayDriverNanobotCLI:
 		return p.nanobotCLIClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
+	case domain.GatewayDriverInkOSCLI:
+		return p.inkosCLIClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	case domain.GatewayDriverZClawRelayHTTP:
 		return p.zclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	case domain.GatewayDriverMisterMorphHTTP:
 		return p.mistermorphClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
+	case domain.GatewayDriverCoPawHTTP:
+		return p.copawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	case domain.GatewayDriverNemoClawWS:
 		return p.nemoclawClientFor(target).DispatchTaskWithSession(ctx, task, target.SessionKey)
 	default:
@@ -393,10 +453,14 @@ func (p *clientPool) dispatchSubtask(ctx context.Context, target domain.Dispatch
 		return p.ironclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	case domain.GatewayDriverNanobotCLI:
 		return p.nanobotCLIClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
+	case domain.GatewayDriverInkOSCLI:
+		return p.inkosCLIClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	case domain.GatewayDriverZClawRelayHTTP:
 		return p.zclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	case domain.GatewayDriverMisterMorphHTTP:
 		return p.mistermorphClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
+	case domain.GatewayDriverCoPawHTTP:
+		return p.copawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	case domain.GatewayDriverNemoClawWS:
 		return p.nemoclawClientFor(target).DispatchSubtaskWithSession(ctx, parent, sub, target.SessionKey)
 	default:
@@ -428,6 +492,9 @@ func (p *clientPool) close() {
 	for _, c := range p.nanobotCLI {
 		_ = c.Close()
 	}
+	for _, c := range p.inkosCLI {
+		_ = c.Close()
+	}
 	for _, c := range p.nullclawHTTP {
 		_ = c.Close()
 	}
@@ -435,6 +502,9 @@ func (p *clientPool) close() {
 		_ = c.Close()
 	}
 	for _, c := range p.misterMorph {
+		_ = c.Close()
+	}
+	for _, c := range p.copawHTTP {
 		_ = c.Close()
 	}
 	for _, c := range p.nemoclawWS {
@@ -447,8 +517,10 @@ func (p *clientPool) close() {
 	p.picoclaw = make(map[string]*picoclaw.Client)
 	p.mimiclaw = make(map[string]*mimiclaw.Client)
 	p.nanobotCLI = make(map[string]*nanobotcli.Client)
+	p.inkosCLI = make(map[string]*inkos.Client)
 	p.nullclawHTTP = make(map[string]*nullclaw.Client)
 	p.zclawRelay = make(map[string]*zclaw.Client)
 	p.misterMorph = make(map[string]*mistermorph.Client)
+	p.copawHTTP = make(map[string]*copaw.Client)
 	p.nemoclawWS = make(map[string]*nemoclaw.Client)
 }

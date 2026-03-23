@@ -1,0 +1,95 @@
+package copaw
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/closeloopautomous/arms/internal/domain"
+)
+
+func TestJoinConsoleAPIURL(t *testing.T) {
+	if got := joinConsoleAPIURL("http://127.0.0.1:8088"); got != "http://127.0.0.1:8088/console/api" {
+		t.Fatalf("got %q", got)
+	}
+	if got := joinConsoleAPIURL("http://127.0.0.1:8088/"); got != "http://127.0.0.1:8088/console/api" {
+		t.Fatalf("got %q", got)
+	}
+	if got := joinConsoleAPIURL("http://127.0.0.1:8088/console/api"); got != "http://127.0.0.1:8088/console/api" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestClient_DispatchTaskWithSession(t *testing.T) {
+	var gotAuth string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/console/api" {
+			http.NotFound(w, r)
+			return
+		}
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"x","result":{"id":"msg-xyz"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(Options{
+		BaseURL:   srv.URL,
+		Token:     "sk-test",
+		Workspace: "ws-personal",
+		Timeout:   5 * time.Second,
+	})
+	ref, err := c.DispatchTaskWithSession(context.Background(), domain.Task{
+		ID: "t1", ProductID: "p1", IdeaID: "i1", Status: domain.StatusPlanning, Spec: "do it",
+	}, "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref != "msg-xyz" {
+		t.Fatalf("ref %q", ref)
+	}
+	if gotAuth != "Bearer sk-test" {
+		t.Fatalf("auth %q", gotAuth)
+	}
+	if gotBody["method"] != rpcMethodChatSend {
+		t.Fatalf("method %+v", gotBody["method"])
+	}
+	params, _ := gotBody["params"].(map[string]any)
+	if params["workspace"] != "ws-personal" {
+		t.Fatalf("workspace %+v", params["workspace"])
+	}
+	if params["session_key"] != "sess-1" {
+		t.Fatalf("session_key %+v", params["session_key"])
+	}
+	prompt, _ := params["prompt"].(string)
+	if !strings.Contains(prompt, "ARMS TASK DISPATCH") || !strings.Contains(prompt, "t1") {
+		t.Fatalf("unexpected prompt: %s", prompt)
+	}
+}
+
+func TestClient_JSONRPCError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad"}}`))
+	}))
+	defer srv.Close()
+	c := New(Options{BaseURL: srv.URL, Workspace: "w", Timeout: time.Second})
+	_, err := c.DispatchTaskWithSession(context.Background(), domain.Task{ID: "t"}, "s")
+	if err == nil || !strings.Contains(err.Error(), "bad") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestClient_MissingWorkspace(t *testing.T) {
+	c := New(Options{BaseURL: "http://example.com", Workspace: "  ", Timeout: time.Second})
+	_, err := c.DispatchTaskWithSession(context.Background(), domain.Task{ID: "t"}, "s")
+	if err == nil || !strings.Contains(err.Error(), "device_id") {
+		t.Fatalf("err %v", err)
+	}
+}

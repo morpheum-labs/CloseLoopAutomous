@@ -27,10 +27,14 @@ const (
 	GatewayDriverMimiClawWS = "mimiclaw_ws"
 	// GatewayDriverNanobotCLI runs HKUDS nanobot via `nanobot agent -m` (subprocess); not an OpenClaw WebSocket gateway.
 	GatewayDriverNanobotCLI = "nanobot_cli"
+	// GatewayDriverInkOSCLI runs InkOS via `inkos write next … --json` (subprocess); not an OpenClaw WebSocket gateway.
+	GatewayDriverInkOSCLI = "inkos_cli"
 	// GatewayDriverZClawRelayHTTP is the zclaw hosted web relay: JSON POST …/api/chat (see tnm/zclaw scripts/web_relay.py).
 	GatewayDriverZClawRelayHTTP = "zclaw_relay_http"
 	// GatewayDriverMisterMorphHTTP is the MisterMorph daemon/runtime task API: POST …/tasks + GET …/tasks/{id} (Bearer auth).
 	GatewayDriverMisterMorphHTTP = "mistermorph_http"
+	// GatewayDriverCoPawHTTP is AgentScope CoPaw: JSON-RPC 2.0 POST …/console/api (chat.send). device_id = workspace; session_key = chat/session id.
+	GatewayDriverCoPawHTTP = "copaw_http"
 )
 
 // GatewayEndpoint is a persisted remote execution plane (URL + auth + driver).
@@ -82,10 +86,14 @@ func NormalizeGatewayDriver(s string) string {
 		return GatewayDriverMimiClawWS
 	case "nanobot", "nanobot_cli", "nanobot-cli":
 		return GatewayDriverNanobotCLI
+	case "inkos", "inkos_cli", "inkos-cli":
+		return GatewayDriverInkOSCLI
 	case "zclaw", "zclaw_relay", "zclaw-relay", "zclaw_relay_http", "zclaw-relay-http", "zclaw_http", "zclaw-http":
 		return GatewayDriverZClawRelayHTTP
 	case "mistermorph", "mistermorph_http", "mistermorph-http", "mister_morph", "mister-morph":
 		return GatewayDriverMisterMorphHTTP
+	case "copaw", "copaw_http", "copaw-http", "agentscope-copaw", "agentscope_copaw":
+		return GatewayDriverCoPawHTTP
 	default:
 		return ""
 	}

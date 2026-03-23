@@ -58,6 +58,14 @@ func TestNormalizeGatewayDriver_NanobotCLI(t *testing.T) {
 	}
 }
 
+func TestNormalizeGatewayDriver_InkOSCLI(t *testing.T) {
+	for _, in := range []string{"inkos_cli", "inkos", "INKOS-CLI"} {
+		if got := NormalizeGatewayDriver(in); got != GatewayDriverInkOSCLI {
+			t.Fatalf("%q -> %q want %s", in, got, GatewayDriverInkOSCLI)
+		}
+	}
+}
+
 func TestNormalizeGatewayDriver_NemoClaw(t *testing.T) {
 	for _, in := range []string{"nemoclaw_ws", "NemoClaw", "nvidia-claw", "NVIDIA_CLAW"} {
 		if got := NormalizeGatewayDriver(in); got != GatewayDriverNemoClawWS {
@@ -70,6 +78,14 @@ func TestNormalizeGatewayDriver_ZClawRelayHTTP(t *testing.T) {
 	for _, in := range []string{"zclaw_relay_http", "zclaw", "ZCLAW-RELAY", "zclaw-http"} {
 		if got := NormalizeGatewayDriver(in); got != GatewayDriverZClawRelayHTTP {
 			t.Fatalf("%q -> %q want %s", in, got, GatewayDriverZClawRelayHTTP)
+		}
+	}
+}
+
+func TestNormalizeGatewayDriver_CoPawHTTP(t *testing.T) {
+	for _, in := range []string{"copaw_http", "CoPaw", "agentscope-copaw", "COPAW-HTTP"} {
+		if got := NormalizeGatewayDriver(in); got != GatewayDriverCoPawHTTP {
+			t.Fatalf("%q -> %q want %s", in, got, GatewayDriverCoPawHTTP)
 		}
 	}
 }

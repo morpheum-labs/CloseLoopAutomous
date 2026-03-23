@@ -230,6 +230,10 @@ const GATEWAY_DRIVER_OPTIONS = [
   ['ironclaw_ws', 'ironclaw_ws'],
   ['mimiclaw_ws', 'mimiclaw_ws'],
   ['zclaw_relay_http', 'zclaw_relay_http'],
+  ['nanobot_cli', 'nanobot_cli'],
+  ['inkos_cli', 'inkos_cli'],
+  ['mistermorph_http', 'mistermorph_http'],
+  ['copaw_http', 'copaw_http'],
 ] as const;
 
 function GatewayEndpointsPanel({ client, defaultProductId }: { client: ArmsClient; defaultProductId?: string }) {

@@ -54,7 +54,7 @@ Default RPC timeout when `timeout_sec` is `0` is controlled by config (e.g. `OPE
 
 ### Canonical **driver** strings
 
-Defined in [`domain/gateway_endpoint.go`](../arms/internal/domain/gateway_endpoint.go). [`NormalizeGatewayDriver`](../arms/internal/domain/gateway_endpoint.go) accepts aliases (e.g. `nullclaw_http` → `nullclaw_a2a`, `zclaw` → `zclaw_relay_http`).
+Defined in [`domain/gateway_endpoint.go`](../arms/internal/domain/gateway_endpoint.go). [`NormalizeGatewayDriver`](../arms/internal/domain/gateway_endpoint.go) accepts aliases (e.g. `nullclaw_http` → `nullclaw_a2a`, `zclaw` → `zclaw_relay_http`, `copaw` / `agentscope-copaw` → `copaw_http`).
 
 | Driver constant | Meaning |
 |-----------------|--------|
@@ -69,8 +69,10 @@ Defined in [`domain/gateway_endpoint.go`](../arms/internal/domain/gateway_endpoi
 | `ironclaw_ws` | IronClaw (Rust OpenClaw-class gateway; same WS flow as OpenClaw) — [`ironclaw`](../arms/internal/adapters/gateway/ironclaw/) |
 | `mimiclaw_ws` | MimiClaw JSON WebSocket ([`mimiclaw`](../arms/internal/adapters/gateway/mimiclaw/)); `session_key` = `chat_id` |
 | `nanobot_cli` | [HKUDS nanobot](https://github.com/HKUDS/nanobot) via subprocess `nanobot agent -m` ([`nanobotcli`](../arms/internal/adapters/gateway/nanobotcli/)); **not** a WebSocket gateway — see [Non-URL drivers](#non-url-and-overloaded-fields) |
+| `inkos_cli` | [InkOS](https://github.com/Narcooo/inkos) via subprocess `inkos write next … --json` ([`inkos`](../arms/internal/adapters/gateway/inkos/)); **not** a WebSocket gateway — see [Non-URL drivers](#non-url-and-overloaded-fields) |
 | `zclaw_relay_http` | [zclaw](https://github.com/tnm/zclaw) web relay: HTTP `POST …/api/chat` ([`zclaw`](../arms/internal/adapters/gateway/zclaw/)); `gateway_token` → `X-Zclaw-Key` when the relay requires `ZCLAW_WEB_API_KEY` |
 | `mistermorph_http` | [MisterMorph](https://github.com/quailyquaily/mistermorph) daemon HTTP API: `POST …/tasks` + poll ([`mistermorph`](../arms/internal/adapters/gateway/mistermorph/)); optional model via `device_id`; optional `topic_id` via execution agent `session_key` |
+| `copaw_http` | [CoPaw](https://github.com/agentscope-ai/CoPaw) Console JSON-RPC: `POST …/console/api` (`chat.send`) ([`copaw`](../arms/internal/adapters/gateway/copaw/)); `device_id` = workspace; execution agent `session_key` = chat/session id; optional Bearer via `gateway_token` |
 
 [`clientPool`](../arms/internal/adapters/gateway/pool.go) reuses clients per `(driver, url, token, device_id, timeout)` and dispatches to the matching implementation.
 
@@ -79,12 +81,14 @@ Defined in [`domain/gateway_endpoint.go`](../arms/internal/domain/gateway_endpoi
 Some drivers reuse `gateway_url` / `gateway_token` / `device_id` for non-network settings:
 
 - **`nanobot_cli`**: [`RoutingGateway`](../arms/internal/adapters/gateway/routing_gateway.go) allows an empty `gateway_url`. Mapping: `gateway_token` → optional path to the `nanobot` binary; `gateway_url` → optional config path (`-c`); `device_id` → optional workspace (`-w`); execution agent `session_key` → `--session` (e.g. `cli:direct`). See comments in [`config/arms.toml`](../config/arms.toml).
+- **`inkos_cli`**: same empty-`gateway_url` allowance as nanobot (optional project root). Mapping: `gateway_token` → optional path to the `inkos` binary; `gateway_url` → optional InkOS project directory (subprocess working directory); `device_id` → **book id** for `write next`; execution agent `session_key` must be non-empty for arms validation but is **not** forwarded to InkOS (use any label, e.g. `arms:inkos`).
 - **`zclaw_relay_http`**: `session_key` must be non-empty for validation but is **not** sent on the wire (single serial bridge per relay).
 - **`mistermorph_http`**: `gateway_url` = runtime base URL; `gateway_token` = Bearer (`server.auth_token`); `device_id` = optional JSON `model` override.
+- **`copaw_http`**: `gateway_url` = CoPaw Console HTTP origin; `gateway_token` = optional web auth Bearer; `device_id` = workspace id; `session_key` = CoPaw chat/session routing key.
 
 ### Knowledge hook
 
-Remote clients in the pool that support it pass the same **`KnowledgeForDispatch`** callback into OpenClaw-class adapters, PicoClaw, MimiClaw, NullClaw HTTP, zclaw relay, MisterMorph, Clawlet, IronClaw, and Nanobot CLI (where applicable).
+Remote clients in the pool that support it pass the same **`KnowledgeForDispatch`** callback into OpenClaw-class adapters, PicoClaw, MimiClaw, NullClaw HTTP, zclaw relay, MisterMorph, CoPaw HTTP, Clawlet, IronClaw, Nanobot CLI, and InkOS CLI (where applicable).
 
 ---
 
@@ -103,8 +107,10 @@ Remote clients in the pool that support it pass the same **`KnowledgeForDispatch
 | [`ironclaw/`](../arms/internal/adapters/gateway/ironclaw/) | IronClaw WS (OpenClaw-class) |
 | [`mimiclaw/`](../arms/internal/adapters/gateway/mimiclaw/) | MimiClaw JSON WS |
 | [`nanobotcli/`](../arms/internal/adapters/gateway/nanobotcli/) | Nanobot subprocess dispatch |
+| [`inkos/`](../arms/internal/adapters/gateway/inkos/) | InkOS subprocess dispatch (`write next`) |
 | [`zclaw/`](../arms/internal/adapters/gateway/zclaw/) | zclaw web relay HTTP (`/api/chat`) |
 | [`mistermorph/`](../arms/internal/adapters/gateway/mistermorph/) | MisterMorph HTTP task API |
+| [`copaw/`](../arms/internal/adapters/gateway/copaw/) | CoPaw Console JSON-RPC (`chat.send`) |
 | [`sqlite/gateway_endpoints.go`](../arms/internal/adapters/sqlite/gateway_endpoints.go) | SQLite persistence for profiles |
 | [`memory/gateway_endpoints.go`](../arms/internal/adapters/memory/gateway_endpoints.go) | In-memory registry (tests / demos) |
 

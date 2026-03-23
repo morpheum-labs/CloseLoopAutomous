@@ -32,8 +32,10 @@ func isPooledRemoteDriver(d string) bool {
 		domain.GatewayDriverIronClawWS,
 		domain.GatewayDriverMimiClawWS,
 		domain.GatewayDriverNanobotCLI,
+		domain.GatewayDriverInkOSCLI,
 		domain.GatewayDriverZClawRelayHTTP,
-		domain.GatewayDriverMisterMorphHTTP:
+		domain.GatewayDriverMisterMorphHTTP,
+		domain.GatewayDriverCoPawHTTP:
 		return true
 	default:
 		return false
@@ -69,7 +71,7 @@ func (r *RoutingGateway) DispatchTask(ctx context.Context, task domain.Task) (st
 		return r.stub.DispatchTask(ctx, task)
 	default:
 		if isPooledRemoteDriver(target.Driver) {
-			if strings.TrimSpace(target.GatewayURL) == "" && target.Driver != domain.GatewayDriverNanobotCLI {
+			if strings.TrimSpace(target.GatewayURL) == "" && target.Driver != domain.GatewayDriverNanobotCLI && target.Driver != domain.GatewayDriverInkOSCLI {
 				return "", fmt.Errorf("%w: gateway_url required for driver %s", domain.ErrInvalidInput, target.Driver)
 			}
 			return r.pool.dispatchTask(ctx, target, task)
@@ -92,7 +94,7 @@ func (r *RoutingGateway) DispatchSubtask(ctx context.Context, parent domain.Task
 		return r.stub.DispatchSubtask(ctx, parent, sub)
 	default:
 		if isPooledRemoteDriver(target.Driver) {
-			if strings.TrimSpace(target.GatewayURL) == "" && target.Driver != domain.GatewayDriverNanobotCLI {
+			if strings.TrimSpace(target.GatewayURL) == "" && target.Driver != domain.GatewayDriverNanobotCLI && target.Driver != domain.GatewayDriverInkOSCLI {
 				return "", fmt.Errorf("%w: gateway_url required for driver %s", domain.ErrInvalidInput, target.Driver)
 			}
 			return r.pool.dispatchSubtask(ctx, target, parent, sub)
