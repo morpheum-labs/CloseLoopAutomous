@@ -258,9 +258,9 @@ func (r *createGatewayEndpointReq) validate() error {
 
 func validateGatewayEndpointFields(normalizedDriver, gatewayURL string) error {
 	if normalizedDriver == "" {
-		return fmt.Errorf("driver must be stub, openclaw_ws, nullclaw_ws, nullclaw_a2a, picoclaw_ws, zeroclaw_ws, or mimiclaw_ws")
+		return fmt.Errorf("driver must be stub, openclaw_ws, nullclaw_ws, nullclaw_a2a, picoclaw_ws, zeroclaw_ws, mimiclaw_ws, nanobot_cli, or nanobot")
 	}
-	if normalizedDriver != domain.GatewayDriverStub && strings.TrimSpace(gatewayURL) == "" {
+	if normalizedDriver != domain.GatewayDriverStub && normalizedDriver != domain.GatewayDriverNanobotCLI && strings.TrimSpace(gatewayURL) == "" {
 		return fmt.Errorf("gateway_url is required for driver %s", normalizedDriver)
 	}
 	return nil

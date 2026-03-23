@@ -33,3 +33,11 @@ func TestNormalizeGatewayDriver_MimiClaw(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeGatewayDriver_NanobotCLI(t *testing.T) {
+	for _, in := range []string{"nanobot_cli", "nanobot", "NANOBOT-CLI"} {
+		if got := NormalizeGatewayDriver(in); got != GatewayDriverNanobotCLI {
+			t.Fatalf("%q -> %q want %s", in, got, GatewayDriverNanobotCLI)
+		}
+	}
+}
