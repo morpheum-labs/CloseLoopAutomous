@@ -164,6 +164,9 @@ func openClawHandshakeStep(ctx context.Context, ep *domain.GatewayEndpoint) (Con
 		if errors.As(err, &pe) && pe != nil {
 			snap.PairingRequestID = pe.RequestID
 			snap.PairingMessage = pe.Reason
+			if pe.CloseCode != 0 {
+				snap.LastCloseCode = pe.CloseCode
+			}
 		}
 		return s, snap
 	}

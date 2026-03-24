@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, MinusCircle, X, XCircle } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, Loader2, MinusCircle, ShieldAlert, X, XCircle } from 'lucide-react';
 import { ArmsClient, ArmsHttpError } from '../../api/armsClient';
 import type {
   ApiGatewayConnectionTestStep,
@@ -17,6 +17,12 @@ type Props = {
   client: ArmsClient;
   onSaved: () => void | Promise<void>;
 };
+
+/** OpenClaw handshake step when the gateway requests device approval (WebSocket 1008 / pairing). */
+function findOpenClawPairingApprovalStep(steps: ApiGatewayConnectionTestStep[] | null | undefined) {
+  if (!steps?.length) return undefined;
+  return steps.find((s) => s.id === 'ws_openclaw_handshake' && s.status === 'warn');
+}
 
 function stepStatusIcon(status: ApiGatewayConnectionTestStep['status']) {
   switch (status) {
@@ -70,6 +76,8 @@ export function EditGatewayEndpointModal({ open, endpoint, onClose, client, onSa
   }, [open, endpoint]);
 
   if (!open || !endpoint) return null;
+
+  const pairingApprovalStep = testLoading ? undefined : findOpenClawPairingApprovalStep(testSteps);
 
   function buildTestDraft(): GatewayTestConnectionDraft {
     const ts = parseInt(timeoutField.trim(), 10);
@@ -303,6 +311,49 @@ export function EditGatewayEndpointModal({ open, endpoint, onClose, client, onSa
                 <p className="ft-banner ft-banner--error" role="alert" style={{ marginBottom: '0.75rem' }}>
                   {testErr}
                 </p>
+              ) : null}
+              {pairingApprovalStep ? (
+                <div
+                  className="ft-banner ft-banner--warn"
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    marginBottom: '0.85rem',
+                    padding: '0.65rem 0.75rem',
+                    textAlign: 'left',
+                    borderWidth: '1px',
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: '0.55rem', alignItems: 'flex-start' }}>
+                    <ShieldAlert size={22} className="ft-gateway-test-step__icon ft-gateway-test-step__icon--warn" aria-hidden />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>Admin approval required (WebSocket 1008)</div>
+                      <p style={{ margin: '0.35rem 0 0', fontSize: '0.78rem', lineHeight: 1.5, opacity: 0.95 }}>
+                        The gateway rejected the OpenClaw handshake with policy close code <strong>1008</strong> (pairing). A
+                        privileged operator on the <strong>gateway host</strong> must approve this client before tasks can
+                        dispatch.
+                      </p>
+                      {pairingApprovalStep.detail ? (
+                        <pre
+                          className="ft-mono ft-muted"
+                          style={{
+                            margin: '0.5rem 0 0',
+                            padding: '0.45rem 0.5rem',
+                            fontSize: '0.72rem',
+                            lineHeight: 1.45,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            borderRadius: 'var(--ft-radius-sm, 6px)',
+                            background: 'var(--mc-bg-tertiary, rgba(0,0,0,0.2))',
+                            border: '1px solid var(--mc-border-subtle, rgba(255,255,255,0.08))',
+                          }}
+                        >
+                          {pairingApprovalStep.detail}
+                        </pre>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
               ) : null}
               {testLoading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--mc-text-secondary)' }}>

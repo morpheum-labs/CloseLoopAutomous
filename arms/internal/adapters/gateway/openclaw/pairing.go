@@ -16,6 +16,8 @@ type PairingError struct {
 	RequestID string
 	Reason    string
 	Detail    string
+	// CloseCode is the WebSocket close code when known (1008 = policy / pairing for OpenClaw).
+	CloseCode int
 }
 
 func (e *PairingError) Error() string {
@@ -80,10 +82,15 @@ func newPairingError(err error) error {
 		return nil
 	}
 	rid := extractRequestID(reason)
+	cc := int(code)
+	if cc == 0 && strings.Contains(strings.ToLower(reason), "pairing") {
+		cc = int(websocket.StatusPolicyViolation)
+	}
 	return &PairingError{
 		RequestID: rid,
 		Reason:    reason,
 		Detail:    pairingApproveDetail(rid),
+		CloseCode: cc,
 	}
 }
 

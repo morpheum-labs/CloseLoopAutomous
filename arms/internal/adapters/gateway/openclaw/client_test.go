@@ -162,7 +162,9 @@ func TestReconnectAfterRPCFailure(t *testing.T) {
 	}
 }
 
-func TestOpenClawClient_PairingRequired(t *testing.T) {
+// TestOpenClawClient_PairingRequired_WebSocket1008 asserts policy close 1008 is mapped to ErrPairingRequired
+// and operator-facing approval instructions (openclaw devices approve).
+func TestOpenClawClient_PairingRequired_WebSocket1008(t *testing.T) {
 	ctx := context.Background()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
@@ -187,11 +189,17 @@ func TestOpenClawClient_PairingRequired(t *testing.T) {
 	if !strings.Contains(detail, "req-xyz") {
 		t.Fatalf("detail should include request id: %q", detail)
 	}
+	if !strings.Contains(detail, "1008") {
+		t.Fatalf("detail should mention WebSocket code 1008 for operator clarity: %q", detail)
+	}
 	if !errors.Is(err, ErrPairingRequired) {
 		t.Fatalf("want ErrPairingRequired, got %v", err)
 	}
 	var pe *PairingError
 	if !errors.As(err, &pe) || pe == nil || pe.RequestID != "req-xyz" {
 		t.Fatalf("PairingError: %+v", pe)
+	}
+	if pe.CloseCode != int(websocket.StatusPolicyViolation) {
+		t.Fatalf("CloseCode=%d want %d (RFC 6455 1008 policy / OpenClaw pairing)", pe.CloseCode, websocket.StatusPolicyViolation)
 	}
 }
