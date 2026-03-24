@@ -343,6 +343,9 @@ function GatewayEndpointsPanel({ client, defaultProductId }: { client: ArmsClien
                 URL
               </th>
               <th className="ft-muted" style={{ padding: '0.35rem 0.5rem', fontWeight: 600 }}>
+                Connect
+              </th>
+              <th className="ft-muted" style={{ padding: '0.35rem 0.5rem', fontWeight: 600 }}>
                 Token
               </th>
               <th className="ft-muted" style={{ padding: '0.35rem 0.5rem', fontWeight: 600 }}>
@@ -365,6 +368,23 @@ function GatewayEndpointsPanel({ client, defaultProductId }: { client: ArmsClien
                 </td>
                 <td style={{ padding: '0.4rem 0.5rem', verticalAlign: 'top', wordBreak: 'break-all', maxWidth: '14rem' }}>
                   {r.gateway_url || '—'}
+                </td>
+                <td style={{ padding: '0.4rem 0.5rem', verticalAlign: 'top', fontSize: '0.7rem', maxWidth: '12rem' }}>
+                  {r.connection_status === 'pairing_required' ? (
+                    <span className="ft-banner ft-banner--warn" style={{ display: 'block', padding: '0.35rem 0.45rem', textAlign: 'left' }}>
+                      Pairing required
+                      {r.pairing_request_id ? (
+                        <>
+                          <br />
+                          <code className="ft-mono">openclaw devices approve {r.pairing_request_id}</code>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : r.connection_status ? (
+                    <span className="ft-muted">{r.connection_status}</span>
+                  ) : (
+                    '—'
+                  )}
                 </td>
                 <td style={{ padding: '0.4rem 0.5rem', verticalAlign: 'top' }}>{r.has_gateway_token ? '•••• (set)' : '(none)'}</td>
                 <td style={{ padding: '0.4rem 0.5rem', verticalAlign: 'top' }} className="ft-mono">

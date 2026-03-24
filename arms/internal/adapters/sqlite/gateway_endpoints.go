@@ -30,12 +30,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 
 func (s *GatewayEndpointStore) ByID(ctx context.Context, id string) (*domain.GatewayEndpoint, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, display_name, driver, gateway_url, gateway_token, device_id, timeout_sec, product_id, created_at
+SELECT id, display_name, driver, gateway_url, gateway_token, device_id, timeout_sec, product_id, created_at,
+       connection_status, pairing_request_id, pairing_message, last_close_code
 FROM gateway_endpoints WHERE id = ?`, id)
 	var e domain.GatewayEndpoint
 	var pid sql.NullString
 	var cat string
-	if err := row.Scan(&e.ID, &e.DisplayName, &e.Driver, &e.GatewayURL, &e.GatewayToken, &e.DeviceID, &e.TimeoutSec, &pid, &cat); err != nil {
+	if err := row.Scan(&e.ID, &e.DisplayName, &e.Driver, &e.GatewayURL, &e.GatewayToken, &e.DeviceID, &e.TimeoutSec, &pid, &cat,
+		&e.ConnectionStatus, &e.PairingRequestID, &e.PairingMessage, &e.LastCloseCode); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}
@@ -60,7 +62,8 @@ func (s *GatewayEndpointStore) List(ctx context.Context, limit int) ([]domain.Ga
 		limit = 500
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, display_name, driver, gateway_url, gateway_token, device_id, timeout_sec, product_id, created_at
+SELECT id, display_name, driver, gateway_url, gateway_token, device_id, timeout_sec, product_id, created_at,
+       connection_status, pairing_request_id, pairing_message, last_close_code
 FROM gateway_endpoints ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -76,9 +79,11 @@ func (s *GatewayEndpointStore) Update(ctx context.Context, e *domain.GatewayEndp
 		pid.Valid = true
 	}
 	res, err := s.db.ExecContext(ctx, `
-UPDATE gateway_endpoints SET display_name=?, driver=?, gateway_url=?, gateway_token=?, device_id=?, timeout_sec=?, product_id=?
+UPDATE gateway_endpoints SET display_name=?, driver=?, gateway_url=?, gateway_token=?, device_id=?, timeout_sec=?, product_id=?,
+       connection_status=?, pairing_request_id=?, pairing_message=?, last_close_code=?
 WHERE id=?`,
-		e.DisplayName, e.Driver, e.GatewayURL, e.GatewayToken, e.DeviceID, e.TimeoutSec, pid, e.ID)
+		e.DisplayName, e.Driver, e.GatewayURL, e.GatewayToken, e.DeviceID, e.TimeoutSec, pid,
+		e.ConnectionStatus, e.PairingRequestID, e.PairingMessage, e.LastCloseCode, e.ID)
 	if err != nil {
 		return err
 	}
@@ -113,7 +118,8 @@ func scanGatewayEndpoints(rows *sql.Rows) ([]domain.GatewayEndpoint, error) {
 		var e domain.GatewayEndpoint
 		var pid sql.NullString
 		var cat string
-		if err := rows.Scan(&e.ID, &e.DisplayName, &e.Driver, &e.GatewayURL, &e.GatewayToken, &e.DeviceID, &e.TimeoutSec, &pid, &cat); err != nil {
+		if err := rows.Scan(&e.ID, &e.DisplayName, &e.Driver, &e.GatewayURL, &e.GatewayToken, &e.DeviceID, &e.TimeoutSec, &pid, &cat,
+			&e.ConnectionStatus, &e.PairingRequestID, &e.PairingMessage, &e.LastCloseCode); err != nil {
 			return nil, err
 		}
 		if pid.Valid {

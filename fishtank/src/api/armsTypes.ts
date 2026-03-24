@@ -352,6 +352,11 @@ export type ApiGatewayEndpoint = {
   timeout_sec: number;
   product_id?: string;
   created_at: string;
+  /** Set by arms after OpenClaw-class test-connection (e.g. pairing_required). */
+  connection_status?: string;
+  pairing_request_id?: string;
+  pairing_message?: string;
+  last_close_code?: number;
 };
 
 export type CreateGatewayEndpointBody = {

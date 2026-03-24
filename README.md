@@ -1,6 +1,8 @@
 # CloseLoopAutomous
 [![arms](https://github.com/morpheumstreet/CloseLoopAutomous/actions/workflows/arms.yml/badge.svg)](https://github.com/morpheumstreet/CloseLoopAutomous/actions/workflows/arms.yml)
 
+https://deepwiki.com/morpheumstreet/mormoneyOS
+
 **Mission and product control for autonomous, self-iterating workflows**—plan products, triage ideas, run Kanban tasks through agents, ship with PRs and merge queues, and watch it all move on a live event stream. The stack pairs a production-minded **Go** API (**arms**) with an optional **Fishtank** browser UI, in the spirit of [Autensa / Mission Control](https://github.com/crshdn/mission-control) but delivered as a focused service you can run locally or in Docker.
 
 ---

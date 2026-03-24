@@ -3,6 +3,7 @@ package openclaw
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -158,5 +159,39 @@ func TestReconnectAfterRPCFailure(t *testing.T) {
 	}
 	if ref != "ok" {
 		t.Fatalf("ref %q", ref)
+	}
+}
+
+func TestOpenClawClient_PairingRequired(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+		if err != nil {
+			return
+		}
+		_ = c.Close(websocket.StatusPolicyViolation, "pairing pending requestId: req-xyz")
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	cl := New(Options{URL: wsURL, Token: "tok", Timeout: 5 * time.Second})
+	defer cl.Close()
+
+	status, detail, err := cl.TestConnectionAndDetectPairing(ctx)
+	if status != domain.GatewayConnectionStatusPairingRequired {
+		t.Fatalf("status %q", status)
+	}
+	if !strings.Contains(detail, "openclaw devices approve") {
+		t.Fatalf("detail %q", detail)
+	}
+	if !strings.Contains(detail, "req-xyz") {
+		t.Fatalf("detail should include request id: %q", detail)
+	}
+	if !errors.Is(err, ErrPairingRequired) {
+		t.Fatalf("want ErrPairingRequired, got %v", err)
+	}
+	var pe *PairingError
+	if !errors.As(err, &pe) || pe == nil || pe.RequestID != "req-xyz" {
+		t.Fatalf("PairingError: %+v", pe)
 	}
 }

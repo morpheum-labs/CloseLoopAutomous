@@ -1394,7 +1394,16 @@ func (h *Handlers) postGatewayEndpointTestConnection(w http.ResponseWriter, r *h
 		writeError(w, http.StatusBadRequest, "validation", err.Error())
 		return
 	}
-	steps := agentidentityapp.RunConnectionTests(r.Context(), &ep)
+	steps, connSnap := agentidentityapp.RunConnectionTests(r.Context(), &ep)
+	if connSnap != nil {
+		if persist, err := h.GatewayEndpoints.ByID(r.Context(), cur.ID); err == nil {
+			persist.ConnectionStatus = connSnap.ConnectionStatus
+			persist.PairingRequestID = connSnap.PairingRequestID
+			persist.PairingMessage = connSnap.PairingMessage
+			persist.LastCloseCode = connSnap.LastCloseCode
+			_ = h.GatewayEndpoints.Update(r.Context(), persist)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"steps": steps})
 }
 
@@ -3033,6 +3042,8 @@ func gatewayEndpointToJSONMasked(e *domain.GatewayEndpoint) map[string]any {
 		"gateway_url": e.GatewayURL, "gateway_token": "", "has_gateway_token": hasTok,
 		"device_id": e.DeviceID, "timeout_sec": e.TimeoutSec,
 		"created_at": e.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"connection_status": e.ConnectionStatus, "pairing_request_id": e.PairingRequestID,
+		"pairing_message": e.PairingMessage, "last_close_code": e.LastCloseCode,
 	}
 	if e.ProductID != "" {
 		m["product_id"] = string(e.ProductID)

@@ -113,16 +113,32 @@ func (c *Client) dialLocked(ctx context.Context) error {
 	return nil
 }
 
-// ensureAuthedLocked performs connect.challenge → connect RPC (Mission Control flow).
-func (c *Client) ensureAuthedLocked(ctx context.Context) error {
-	if c.authenticated && c.conn != nil {
-		return nil
-	}
-	_ = c.dropConnLocked()
-	if err := c.dialLocked(ctx); err != nil {
-		return err
-	}
+// TestConnectionAndDetectPairing dials, runs connect.challenge → connect, then tears the connection down.
+// On pairing policy close (1008) or a reason mentioning "pairing", returns [domain.GatewayConnectionStatusPairingRequired], a user-facing detail, and ErrPairingRequired.
+func (c *Client) TestConnectionAndDetectPairing(ctx context.Context) (connectionStatus string, detail string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	defer func() { _ = c.dropConnLocked() }()
 
+	if err := c.dialLocked(ctx); err != nil {
+		return "", "", err
+	}
+	if err := c.handshakeAfterDialLocked(ctx); err != nil {
+		if errors.Is(err, ErrPairingRequired) {
+			var pe *PairingError
+			_ = errors.As(err, &pe)
+			if pe != nil {
+				return domain.GatewayConnectionStatusPairingRequired, pe.Detail, err
+			}
+			return domain.GatewayConnectionStatusPairingRequired, err.Error(), err
+		}
+		return "", "", err
+	}
+	return "", "", nil
+}
+
+// handshakeAfterDialLocked expects c.conn set; completes connect.challenge → connect.
+func (c *Client) handshakeAfterDialLocked(ctx context.Context) error {
 	for {
 		fr, raw, err := readJSONFrame(ctx, c.conn)
 		if err != nil {
@@ -138,6 +154,21 @@ func (c *Client) ensureAuthedLocked(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// ensureAuthedLocked performs connect.challenge → connect RPC (Mission Control flow).
+func (c *Client) ensureAuthedLocked(ctx context.Context) error {
+	if c.authenticated && c.conn != nil {
+		return nil
+	}
+	_ = c.dropConnLocked()
+	if err := c.dialLocked(ctx); err != nil {
+		return err
+	}
+	if err := c.handshakeAfterDialLocked(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Client) answerChallengeLocked(ctx context.Context, challengeRaw []byte) error {
@@ -184,7 +215,7 @@ func readJSONFrame(ctx context.Context, conn *websocket.Conn) (frame, []byte, er
 	for {
 		_, b, err := conn.Read(ctx)
 		if err != nil {
-			return frame{}, nil, fmt.Errorf("openclaw read: %w", err)
+			return frame{}, nil, enrichReadError(err)
 		}
 		var fr frame
 		if json.Unmarshal(b, &fr) != nil || fr.Type == "" {

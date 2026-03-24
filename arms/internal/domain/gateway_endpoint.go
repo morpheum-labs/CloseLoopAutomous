@@ -39,6 +39,19 @@ const (
 	GatewayDriverMetaClawHTTP = "metaclaw_http"
 )
 
+// Gateway connection diagnostics (OpenClaw-class WebSocket pairing / policy closes), persisted on gateway_endpoints.
+const (
+	GatewayConnectionStatusPairingRequired = "pairing_required"
+)
+
+// GatewayConnectivitySnapshot is applied to a gateway_endpoints row after POST …/test-connection runs an OpenClaw handshake probe.
+type GatewayConnectivitySnapshot struct {
+	ConnectionStatus string
+	PairingRequestID string
+	PairingMessage   string
+	LastCloseCode    int
+}
+
 // GatewayEndpoint is a persisted remote execution plane (URL + auth + driver).
 type GatewayEndpoint struct {
 	ID           string
@@ -50,6 +63,11 @@ type GatewayEndpoint struct {
 	TimeoutSec   int
 	ProductID    ProductID
 	CreatedAt    time.Time
+	// ConnectionStatus is set by arms when a probe detects OpenClaw pairing (e.g. WS 1008); empty means no outstanding pairing signal.
+	ConnectionStatus string
+	PairingRequestID string
+	PairingMessage   string
+	LastCloseCode    int
 }
 
 // DispatchTarget is the resolved connection + session for one gateway RPC.

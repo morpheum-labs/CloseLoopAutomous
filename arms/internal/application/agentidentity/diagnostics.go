@@ -2,6 +2,7 @@ package agentidentity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/adapters/gateway/openclaw"
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/domain"
 )
 
@@ -23,11 +25,13 @@ type ConnectionTestStep struct {
 }
 
 // RunConnectionTests walks configuration → URL → transport (HTTP or WebSocket) → auth hints for Mission Control visibility.
-func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []ConnectionTestStep {
+// When the second return value is non-nil, POST /api/gateway-endpoints/{id}/test-connection persists it onto the gateway row (clears pairing fields on successful OpenClaw handshake).
+func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) ([]ConnectionTestStep, *domain.GatewayConnectivitySnapshot) {
 	if ep == nil {
-		return []ConnectionTestStep{{ID: "config", Title: "Gateway configuration", Status: "fail", Detail: "nil endpoint"}}
+		return []ConnectionTestStep{{ID: "config", Title: "Gateway configuration", Status: "fail", Detail: "nil endpoint"}}, nil
 	}
 	var steps []ConnectionTestStep
+	var connectivity *domain.GatewayConnectivitySnapshot
 	t0 := time.Now()
 
 	// 1) Driver / MC registry shape
@@ -37,14 +41,14 @@ func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []Conne
 		s1.Status = "fail"
 		s1.Detail = "Unknown or empty driver"
 		s1.ElapsedMs = time.Since(t0).Milliseconds()
-		return append(steps, s1)
+		return append(steps, s1), nil
 	}
 	ep.Driver = drv
 	if drv != domain.GatewayDriverStub && drv != domain.GatewayDriverNanobotCLI && drv != domain.GatewayDriverInkOSCLI && strings.TrimSpace(ep.GatewayURL) == "" {
 		s1.Status = "fail"
 		s1.Detail = fmt.Sprintf("gateway_url is required for driver %s", drv)
 		s1.ElapsedMs = time.Since(t0).Milliseconds()
-		return append(steps, s1)
+		return append(steps, s1), nil
 	}
 	s1.Status = "pass"
 	s1.Detail = fmt.Sprintf("Driver %s", drv)
@@ -61,7 +65,7 @@ func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []Conne
 		s2.ElapsedMs = time.Since(t1).Milliseconds()
 		steps = append(steps, s2)
 		steps = append(steps, cliOrStubTail(drv)...)
-		return steps
+		return steps, nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -73,7 +77,7 @@ func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []Conne
 		}
 		s2.ElapsedMs = time.Since(t1).Milliseconds()
 		steps = append(steps, s2)
-		return steps
+		return steps, nil
 	}
 	s2.Status = "pass"
 	s2.Detail = fmt.Sprintf("%s://%s", u.Scheme, u.Host)
@@ -84,7 +88,13 @@ func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []Conne
 
 	// 3–4) Transport + auth
 	if strings.HasPrefix(lowSc, "ws") {
-		steps = append(steps, wsHandshakeStep(ctx, raw, ep)...)
+		if openClawHandshakeProbeDriver(drv) {
+			step, snap := openClawHandshakeStep(ctx, ep)
+			steps = append(steps, step)
+			connectivity = snap
+		} else {
+			steps = append(steps, wsHandshakeStep(ctx, raw, ep)...)
+		}
 	} else if lowSc == "http" || lowSc == "https" {
 		steps = append(steps, httpTransportSteps(ctx, raw, ep)...)
 	} else {
@@ -100,7 +110,66 @@ func RunConnectionTests(ctx context.Context, ep *domain.GatewayEndpoint) []Conne
 		Status: "pass",
 		Detail: "Tasks use this gateway via execution agents + gateway_endpoint_id; run a test dispatch from the board when ready.",
 	})
-	return steps
+	return steps, connectivity
+}
+
+func openClawHandshakeProbeDriver(drv string) bool {
+	switch drv {
+	case domain.GatewayDriverOpenClawWS, domain.GatewayDriverNemoClawWS, domain.GatewayDriverNullClawWS,
+		domain.GatewayDriverZeroClawWS, domain.GatewayDriverClawletWS, domain.GatewayDriverIronClawWS:
+		return true
+	default:
+		return false
+	}
+}
+
+func openClawHandshakeStep(ctx context.Context, ep *domain.GatewayEndpoint) (ConnectionTestStep, *domain.GatewayConnectivitySnapshot) {
+	t0 := time.Now()
+	s := ConnectionTestStep{
+		ID: "ws_openclaw_handshake", Title: "OpenClaw WebSocket (handshake + pairing check)",
+	}
+	to := time.Duration(ep.TimeoutSec) * time.Second
+	if to < 12*time.Second {
+		to = 12 * time.Second
+	}
+	if to > 90*time.Second {
+		to = 90 * time.Second
+	}
+	subCtx, cancel := context.WithTimeout(ctx, to+3*time.Second)
+	defer cancel()
+
+	cl := openclaw.New(openclaw.Options{
+		URL:      ep.GatewayURL,
+		Token:    ep.GatewayToken,
+		DeviceID: ep.DeviceID,
+		Timeout:  to,
+	})
+	defer func() { _ = cl.Close() }()
+
+	_, detail, err := cl.TestConnectionAndDetectPairing(subCtx)
+	s.ElapsedMs = time.Since(t0).Milliseconds()
+	if err == nil {
+		s.Status = "pass"
+		s.Detail = "connect.challenge → connect succeeded"
+		return s, &domain.GatewayConnectivitySnapshot{}
+	}
+	if errors.Is(err, openclaw.ErrPairingRequired) {
+		s.Status = "warn"
+		s.Detail = detail
+		snap := &domain.GatewayConnectivitySnapshot{
+			ConnectionStatus: domain.GatewayConnectionStatusPairingRequired,
+			LastCloseCode:    int(websocket.StatusPolicyViolation),
+		}
+		var pe *openclaw.PairingError
+		if errors.As(err, &pe) && pe != nil {
+			snap.PairingRequestID = pe.RequestID
+			snap.PairingMessage = pe.Reason
+		}
+		return s, snap
+	}
+	s.Status = "fail"
+	s.Detail = err.Error()
+	return s, nil
 }
 
 func cliOrStubTail(drv string) []ConnectionTestStep {
