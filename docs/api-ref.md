@@ -262,12 +262,26 @@ After the initial `hello` object, each **`data:`** line is JSON with at least `t
 
 ---
 
+## Gateway endpoints (dispatch profiles)
+
+Persisted in SQLite **`gateway_endpoints`** (or in-memory store in demos). Tokens are never returned on list/create/patch — use **`has_gateway_token`**.
+
+| Method | Path | Body (JSON) | Notes |
+|--------|------|-------------|--------|
+| GET | `/api/gateway-endpoints` | — | **`{ "gateway_endpoints": [ … ] }`**. Each row: `id`, `display_name`, `driver`, `gateway_url`, `gateway_token` (always empty), **`has_gateway_token`**, `device_id`, `timeout_sec`, optional `product_id`, `created_at`, optional **`connection_status`** (e.g. **`pairing_required`** after an OpenClaw probe), **`pairing_request_id`**, **`pairing_message`**, **`last_close_code`** (WebSocket policy / pairing hints). |
+| POST | `/api/gateway-endpoints` | **`driver`**; optional `display_name`, `gateway_url`, `gateway_token`, `device_id`, `timeout_sec`, `product_id` | **201** — normalized **`driver`** (e.g. `openclaw_ws`, `stub`, …). |
+| PATCH | `/api/gateway-endpoints/{id}` | Partial update; same field names as POST; omit **`gateway_token`** to keep the stored token | **200** updated row (masked). |
+| POST | `/api/gateway-endpoints/{id}/test-connection` | Optional **`{ "draft": { "gateway_url"?, "gateway_token"?, "driver"?, "device_id"?, "timeout_sec"? } }`** — test unsaved form values | **200** **`{ "steps": [ { "id", "title", "status", "detail?", "elapsed_ms?" } ] }`**. Mission Control checklist: URL, transport, auth. For **OpenClaw-class WebSocket** drivers (`openclaw_ws`, `nemoclaw_ws`, `nullclaw_ws`, `zeroclaw_ws`, `clawlet_ws`, `ironclaw_ws`), includes **`ws_openclaw_handshake`** (real **`connect.challenge` → `connect`**). On **WebSocket 1008** / pairing close, step status **`warn`** and server may persist **`connection_status`**, **`pairing_*`**, **`last_close_code`** on the endpoint row. Successful handshake clears those fields. |
+| DELETE | `/api/gateway-endpoints/{id}` | — | **204**. **409** if any **execution agent** still references this endpoint. |
+
+---
+
 ## Agents (registry + task heartbeats)
 
 | Method | Path | Body | Notes |
 |--------|------|------|--------|
-| GET | `/api/agents` | — | **`registry`**: registered execution agents (`id`, `display_name`, optional `product_id`, `source`, `external_ref`, `created_at`). **`items`**: recent **task agent health** rows (same shape as before). **`identities`**: synthesized **`AgentIdentity`** rows from **`gateway_endpoints`** (see [scan-agents.md](scan-agents.md)). **`stub: true`** on **`items`** only when agent health is not wired. |
-| POST | `/api/agents` | `display_name`; optional `product_id`, `source`, `external_ref` | Creates a logical agent slot (**201**). |
+| GET | `/api/agents` | — | **`registry`**: registered execution agents — `id`, `display_name`, **`gateway_endpoint_id`**, **`session_key`**, optional `product_id`, `source`, `external_ref`, `created_at`. **`items`**: recent **task agent health** rows (per-task liveness). **`identities`**: synthesized **`AgentIdentity`** rows from **`agent_profiles`** / **`gateway_endpoints`** (see [scan-agents.md](scan-agents.md)); **at most 200** in this response. For a larger scan, call **`GET /api/fleet/identities?limit=500`**. **`stub: true`** applies to **`items`** only when agent health is not wired. |
+| POST | `/api/agents` | **`display_name`**, **`gateway_endpoint_id`**; **`session_key`** required unless the bound gateway **`driver`** is **`stub`**; optional `product_id`, `source`, `external_ref` | Creates a logical dispatch slot (**201**). Response JSON includes **`gateway_endpoint_id`** and **`session_key`** (same shape as registry rows). |
 | GET | `/api/agents/{id}/mailbox` | — | Query: optional `limit`. **`{ "messages": [ { id, agent_id, body, optional task_id, created_at } ] }`**. |
 | POST | `/api/agents/{id}/mailbox` | `body`; optional `task_id` | Append-only mailbox message (**201**). |
 
@@ -275,7 +289,7 @@ After the initial `hello` object, each **`data:`** line is JSON with at least `t
 
 | Method | Path | Body | Notes |
 |--------|------|------|--------|
-| GET | `/api/fleet/identities` | — | Query: optional **`limit`** (default 200, max 500). **`{ "identities": [ AgentIdentity, … ] }`**. |
+| GET | `/api/fleet/identities` | — | Query: optional **`limit`** (default **200**, max **500**). **`{ "identities": [ AgentIdentity, … ] }`** — same **`AgentIdentity`** JSON as **`GET /api/agents`** **`identities[]`**, but allows a higher **`limit`** for UIs that only need profiles (e.g. Fishtank **Agents** page may call **`GET /api/agents`** plus this route for up to **500** rows). |
 | GET | `/api/fleet/identities/{id}` | — | One **`AgentIdentity`** by profile id (see **`domain.StableAgentProfileID`**). |
 | POST | `/api/fleet/refresh` | `{}` | Re-synthesize all identities from **`gateway_endpoints`**; upserts **`agent_profiles`**; emits SSE **`agent_identity_updated`** per gateway. |
 | GET | `/api/fleet/geo-summary` | — | **`countries`**: `{ country_iso, count }[]`, **`total_identities`**, **`with_geo`**. |
