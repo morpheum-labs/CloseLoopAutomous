@@ -180,15 +180,17 @@ func (c *Client) answerChallengeLocked(ctx context.Context, challengeRaw []byte)
 	_ = json.Unmarshal(challengeRaw, &wrap)
 	_ = wrap.Payload.Nonce
 
+	// client.id / client.mode must match the gateway JSON Schema (same constants as
+	// https://github.com/crshdn/mission-control/blob/main/src/lib/openclaw/client.ts — id "cli", mode "ui").
 	reqID := uuid.NewString()
 	params := map[string]any{
 		"minProtocol": c.opts.MinProto,
 		"maxProtocol": c.opts.MaxProto,
 		"client": map[string]any{
-			"id":       "arms",
-			"version":  "0.1.0",
+			"id":       "cli",
+			"version":  "1.0.1",
 			"platform": "go",
-			"mode":     "orchestrator",
+			"mode":     "ui",
 		},
 		"auth":   map[string]any{"token": c.opts.Token},
 		"role":   "operator",
