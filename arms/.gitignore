@@ -1,0 +1,3 @@
+# Track go.sum in this module even if a global gitignore ignores go.sum
+# (required for reproducible builds and CI: go test -mod=readonly).
+!go.sum
