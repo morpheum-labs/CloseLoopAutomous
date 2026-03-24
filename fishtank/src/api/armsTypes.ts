@@ -160,7 +160,7 @@ export type ApiAgentRegistryRow = {
   session_key?: string;
 };
 
-/** Synthesized gateway agent profile (`GET /api/agents` `identities[]`, `GET /api/fleet/identities`). */
+/** Discovered gateway agent profile (`GET /api/fleet/identities` after `POST /api/fleet/refresh`). */
 export type ApiAgentIdentity = {
   id: string;
   gateway_url: string;
@@ -199,11 +199,10 @@ export type ApiAgentIdentity = {
   custom?: Record<string, unknown>;
 };
 
-/** `GET /api/agents` — registry plus recent task heartbeats; `stub` when agent health store is disabled. */
+/** `GET /api/agents` — execution registry plus recent task heartbeats; `stub` when agent health store is disabled. */
 export type ApiAgentsListResponse = {
   registry?: ApiAgentRegistryRow[];
   items?: ApiAgentHealthItem[];
-  identities?: ApiAgentIdentity[];
   stub?: boolean;
 };
 

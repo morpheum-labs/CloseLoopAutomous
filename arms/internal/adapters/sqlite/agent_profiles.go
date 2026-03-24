@@ -47,6 +47,11 @@ ON CONFLICT(id) DO UPDATE SET
 	return err
 }
 
+func (s *AgentProfileStore) DeleteByGatewayID(ctx context.Context, gatewayID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM agent_profiles WHERE gateway_id = ?`, gatewayID)
+	return err
+}
+
 func (s *AgentProfileStore) ByID(ctx context.Context, id string) (*domain.AgentIdentity, error) {
 	var raw string
 	err := s.db.QueryRowContext(ctx, `SELECT identity_json FROM agent_profiles WHERE id = ?`, id).Scan(&raw)

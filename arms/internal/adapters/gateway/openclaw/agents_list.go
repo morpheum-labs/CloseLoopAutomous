@@ -12,7 +12,7 @@ import (
 // mapAgentsListPayload maps OpenClaw agents.list JSON payload to domain.AgentIdentity.
 // Accepts { "agents": [...] } or a bare JSON array (legacy / alternate gateways).
 func mapAgentsListPayload(raw json.RawMessage, gatewayURL string, now time.Time) ([]domain.AgentIdentity, error) {
-	raw = bytesTrimSpaceJSON(raw)
+	raw = unwrapAgentsListEnvelope(bytesTrimSpaceJSON(raw))
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -27,6 +27,28 @@ func mapAgentsListPayload(raw json.RawMessage, gatewayURL string, now time.Time)
 		return nil, fmt.Errorf("openclaw agents.list payload: %w", err)
 	}
 	return mapAgentListEntries(env.Agents, gatewayURL, now)
+}
+
+// unwrapAgentsListEnvelope peels a single-key payload/result wrapper (some gateways double-wrap).
+func unwrapAgentsListEnvelope(raw json.RawMessage) json.RawMessage {
+	for len(raw) > 0 && string(raw) != "null" {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(raw, &probe) != nil || len(probe) != 1 {
+			return raw
+		}
+		var next json.RawMessage
+		for _, k := range []string{"payload", "result"} {
+			if inner, ok := probe[k]; ok {
+				next = inner
+				break
+			}
+		}
+		if len(bytesTrimSpaceJSON(next)) == 0 {
+			return raw
+		}
+		raw = bytesTrimSpaceJSON(next)
+	}
+	return raw
 }
 
 func mapAgentListEntries(entries []json.RawMessage, gatewayURL string, now time.Time) ([]domain.AgentIdentity, error) {

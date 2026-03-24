@@ -20,8 +20,10 @@ var (
 	ErrShippingNonRetryable = errors.New("shipping error: non-retryable")
 	ErrMergeConflict        = errors.New("merge conflict")
 	ErrMergeShipBusy        = errors.New("merge queue lease held by another worker")
-	ErrNotConfigured        = errors.New("not configured")
-	ErrMergeGatesNotMet     = errors.New("merge gates not satisfied")
+	ErrNotConfigured              = errors.New("not configured")
+	ErrMergeGatesNotMet           = errors.New("merge gates not satisfied")
+	// ErrRemoteAgentListUnsupported means the driver has no remote agent enumeration (fleet discovery skips RPC list).
+	ErrRemoteAgentListUnsupported = errors.New("remote agent list not supported for this gateway driver")
 	// ErrProductAlreadyDeleted wraps ErrConflict when soft-delete is applied to an already-deleted product.
 	ErrProductAlreadyDeleted = fmt.Errorf("%w: product already deleted", ErrConflict)
 	// ErrProductNotDeleted wraps ErrConflict when restore is applied to an active product.

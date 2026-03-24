@@ -64,11 +64,11 @@ export interface MissionUiValue {
   executionAgentRegistry: ApiAgentRegistryRow[];
   /** True when arms returned `stub` for global heartbeat items (agent health disabled). */
   agentRegistryHealthStub: boolean;
-  /** Unified gateway agent profiles (`GET /api/agents` `identities[]`). */
+  /** Discovered gateway profiles (`GET /api/fleet/identities`). */
   fleetAgentIdentities: ApiAgentIdentity[];
-  /** Calls `POST /api/fleet/refresh` then reloads identities from `GET /api/agents`. */
+  /** Calls `POST /api/fleet/refresh` then reloads fleet from `GET /api/fleet/identities`. */
   refreshFleetIdentities: () => Promise<void>;
-  /** `GET /api/agents` (registry + heartbeats stub) + `GET /api/fleet/identities` (scan, up to 500 rows). Use on Agents page. */
+  /** `GET /api/agents` (registry + heartbeats stub) + `GET /api/fleet/identities` (up to 500 rows). */
   refreshAgentDirectory: () => Promise<void>;
   events: FeedEvent[];
   isOnline: boolean;
@@ -187,14 +187,12 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
     const snap = await client.listAgents();
     setExecutionAgentRegistry(snap.registry);
     setAgentRegistryHealthStub(snap.stub);
-    let identities = snap.identities ?? [];
     try {
       const fleet = await client.listFleetIdentities({ limit: 500 });
-      if (fleet.length > 0) identities = fleet;
+      setFleetAgentIdentities(fleet);
     } catch {
-      /* use identities from GET /api/agents */
+      setFleetAgentIdentities([]);
     }
-    setFleetAgentIdentities(identities);
   }, [client]);
 
   const refreshWorkspaces = useCallback(async () => {
@@ -272,12 +270,13 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
         setBoardLoadFailed(false);
       }
       try {
-        const [apiTasks, stalledRaw, detail, health, agentsSnap] = await Promise.all([
+        const [apiTasks, stalledRaw, detail, health, agentsSnap, fleetRows] = await Promise.all([
           client.listProductTasks(wid),
           client.listStalledTasks(wid),
           client.getProduct(wid).catch(() => null),
           client.listProductAgentHealth(wid).catch(() => []),
           client.listAgents().catch(() => null),
+          client.listFleetIdentities({ limit: 500 }).catch(() => []),
         ]);
         setTasks(apiTasks.map(apiTaskToTask));
         setStalledTasks(stalledApiToRows(stalledRaw));
@@ -285,8 +284,8 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
         if (agentsSnap) {
           setExecutionAgentRegistry(agentsSnap.registry);
           setAgentRegistryHealthStub(agentsSnap.stub);
-          setFleetAgentIdentities(agentsSnap.identities ?? []);
         }
+        setFleetAgentIdentities(fleetRows);
         if (detail) setProductDetail(detail);
         const counts = summarizeTaskCounts(apiTasks);
         const agentCounts = summarizeAgentCounts(health);
@@ -331,10 +330,13 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
           fleetIdentitiesDebounceRef.current = null;
           void (async () => {
             try {
-              const snap = await clientRef.current.listAgents();
-              setFleetAgentIdentities(snap.identities ?? []);
+              const [snap, fleet] = await Promise.all([
+                clientRef.current.listAgents(),
+                clientRef.current.listFleetIdentities({ limit: 500 }),
+              ]);
               setExecutionAgentRegistry(snap.registry ?? []);
               setAgentRegistryHealthStub(snap.stub === true);
+              setFleetAgentIdentities(fleet);
             } catch {
               /* ignore */
             }
@@ -358,12 +360,13 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       setApiError(null);
       setProductDetail(null);
       try {
-        const [detail, apiTasks, health, stalledRaw, agentsSnap] = await Promise.all([
+        const [detail, apiTasks, health, stalledRaw, agentsSnap, fleetRows] = await Promise.all([
           client.getProduct(workspace.id).catch(() => null),
           client.listProductTasks(workspace.id),
           client.listProductAgentHealth(workspace.id).catch(() => []),
           client.listStalledTasks(workspace.id),
           client.listAgents().catch(() => null),
+          client.listFleetIdentities({ limit: 500 }).catch(() => []),
         ]);
         const tc = summarizeTaskCounts(apiTasks);
         const ac = summarizeAgentCounts(health);
@@ -381,8 +384,8 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
         if (agentsSnap) {
           setExecutionAgentRegistry(agentsSnap.registry ?? []);
           setAgentRegistryHealthStub(agentsSnap.stub === true);
-          setFleetAgentIdentities(agentsSnap.identities ?? []);
         }
+        setFleetAgentIdentities(fleetRows);
       } catch {
         setTasks([]);
         setAgents([]);

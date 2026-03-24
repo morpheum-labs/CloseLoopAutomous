@@ -71,11 +71,17 @@ type GeoLocation struct {
 	LastUpdated time.Time `json:"last_updated"`
 }
 
-// StableAgentProfileID returns a stable primary key for one logical identity per gateway endpoint (MVP).
-func StableAgentProfileID(endpointID, deviceID string) string {
-	d := strings.TrimSpace(deviceID)
-	if d == "" {
-		d = "default"
+// FleetProfileID returns a stable primary key for a cached remote agent row: gateway endpoint × remote agent key.
+func FleetProfileID(endpointID, remoteKey string) string {
+	key := strings.TrimSpace(remoteKey)
+	if key == "" {
+		key = "_"
 	}
-	return endpointID + ":" + d
+	key = strings.Map(func(r rune) rune {
+		if r <= ' ' || r > '~' || r == '|' {
+			return '_'
+		}
+		return r
+	}, key)
+	return endpointID + "|" + key
 }

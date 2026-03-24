@@ -216,10 +216,20 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
   );
 }
 
+function discoveryDetail(row: ApiAgentIdentity): string | null {
+  const c = row.custom;
+  if (!c || typeof c !== 'object') return null;
+  const rec = c as Record<string, unknown>;
+  const err = rec.discovery_error;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  return null;
+}
+
 function IdentityRow({ row }: { row: ApiAgentIdentity }) {
   const [open, setOpen] = useState(false);
   const subs = row.sub_agents?.length ? row.sub_agents : [];
   const badge = identityStatusBadge(row.status);
+  const discErr = discoveryDetail(row);
   const geoLine =
     row.geo && row.geo.source && row.geo.source !== 'none'
       ? [row.geo.city, row.geo.region, row.geo.country].filter(Boolean).join(', ') || row.geo.country_iso
@@ -239,6 +249,11 @@ function IdentityRow({ row }: { row: ApiAgentIdentity }) {
         {row.gateway_url ? (
           <div className="ft-truncate ft-mono" style={{ fontSize: '0.6rem', opacity: 0.75, marginTop: 2 }}>
             {row.gateway_url}
+          </div>
+        ) : null}
+        {discErr ? (
+          <div className="ft-mono" style={{ fontSize: '0.6rem', color: 'var(--mc-danger, #c45)', marginTop: 4, lineHeight: 1.4, wordBreak: 'break-word' }}>
+            {discErr}
           </div>
         ) : null}
         {subs.length > 0 ? (

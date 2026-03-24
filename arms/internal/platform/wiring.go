@@ -94,13 +94,7 @@ func NewInMemoryApp(cfg config.Config, b Build) *App {
 	}
 	geoR, geoCleanup := geoip.NewResolver(cfg.GeoIP2CityPath)
 	agentProfiles := memory.NewAgentProfileStore()
-	idSvc := &agentidentity.Service{
-		Endpoints: gatewayEndpoints,
-		Profiles:  agentProfiles,
-		Geo:       geoR,
-		Events:    hub,
-	}
-	h, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, gatewayEndpoints, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, false, hub, hub, nil, idSvc, sqlite.ExpectedSchemaVersion, b)
+	h, idSvc, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, gatewayEndpoints, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, false, hub, hub, nil, agentProfiles, geoR, sqlite.ExpectedSchemaVersion, b)
 	if err := idSvc.RefreshAll(context.Background()); err != nil {
 		slog.Default().Warn("arms agent identity bootstrap refresh", "err", err)
 	}
@@ -140,10 +134,11 @@ func buildHandlers(
 	hub *livefeed.Hub,
 	taskEvents ports.LiveActivityPublisher,
 	liveTX ports.LiveActivityTX,
-	agentIdentity *agentidentity.Service,
+	agentProfiles ports.AgentProfileRepository,
+	geoR ports.GeoIPResolver,
 	expectedSchemaVersion int,
 	b Build,
-) (*httpapi.Handlers, func()) {
+) (*httpapi.Handlers, *agentidentity.Service, func()) {
 	clock := timeadapter.System{}
 	ids := &identity.Sequential{}
 	knowSvc := &knowledgeapp.Service{
@@ -166,6 +161,14 @@ func buildHandlers(
 		AutoStart:        cfg.NemoClawAutoStart,
 		DefaultBlueprint: cfg.NemoClawDefaultBlueprint,
 	})
+	idSvc := &agentidentity.Service{
+		Endpoints: gatewayEndpoints,
+		Profiles:  agentProfiles,
+		Registry:  execAgents,
+		Source:    agentGW,
+		Geo:       geoR,
+		Events:    taskEvents,
+	}
 
 	budgetPolicy := &budget.Composite{
 		Costs:             costs,
@@ -348,6 +351,6 @@ func buildHandlers(
 		BuildVersion:          buildVer,
 		BuildCommit:           strings.TrimSpace(b.Commit),
 		ExpectedSchemaVersion: expectedSchemaVersion,
-		AgentIdentity:         agentIdentity,
-	}, gwCleanup
+		AgentIdentity:         idSvc,
+	}, idSvc, gwCleanup
 }

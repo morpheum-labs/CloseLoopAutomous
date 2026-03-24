@@ -191,6 +191,119 @@ func TestListAgentIdentities_agentsList(t *testing.T) {
 	}
 }
 
+func TestListAgentIdentities_usesResultEnvelope(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+		if err != nil {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sess := context.Background()
+			challenge, _ := json.Marshal(map[string]any{
+				"type": "event", "event": "connect.challenge", "payload": map[string]any{"nonce": "n"},
+			})
+			if err := c.Write(sess, websocket.MessageText, challenge); err != nil {
+				t.Errorf("challenge: %v", err)
+				return
+			}
+			_, raw, err := c.Read(sess)
+			if err != nil {
+				t.Errorf("read connect: %v", err)
+				return
+			}
+			var connReq map[string]any
+			if err := json.Unmarshal(raw, &connReq); err != nil {
+				t.Errorf("parse connect: %v", err)
+				return
+			}
+			cid, _ := connReq["id"].(string)
+			res, _ := json.Marshal(map[string]any{"type": "res", "id": cid, "ok": true})
+			if err := c.Write(sess, websocket.MessageText, res); err != nil {
+				t.Errorf("connect res: %v", err)
+				return
+			}
+			_, raw2, err := c.Read(sess)
+			if err != nil {
+				t.Errorf("read agents.list: %v", err)
+				return
+			}
+			var listReq map[string]any
+			if err := json.Unmarshal(raw2, &listReq); err != nil {
+				t.Errorf("parse agents.list: %v", err)
+				return
+			}
+			lid, _ := listReq["id"].(string)
+			agentsPayload, _ := json.Marshal(map[string]any{
+				"type": "res",
+				"id":   lid,
+				"ok":   true,
+				"result": map[string]any{
+					"agents": []map[string]any{{"id": "from-result", "name": "R"}},
+				},
+			})
+			_ = c.Write(sess, websocket.MessageText, agentsPayload)
+		}()
+		<-done
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	cl := New(Options{URL: wsURL, Token: "tok", Timeout: 5 * time.Second})
+	defer cl.Close()
+
+	idents, err := cl.ListAgentIdentities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idents) != 1 || idents[0].ID != "from-result" || idents[0].Name != "R" {
+		t.Fatalf("got %+v", idents)
+	}
+}
+
+func TestConnectFailsOnErrorFieldWithoutOkFalse(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+		if err != nil {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sess := context.Background()
+			challenge, _ := json.Marshal(map[string]any{
+				"type": "event", "event": "connect.challenge", "payload": map[string]any{"nonce": "n"},
+			})
+			_ = c.Write(sess, websocket.MessageText, challenge)
+			_, raw, _ := c.Read(sess)
+			var connReq map[string]any
+			_ = json.Unmarshal(raw, &connReq)
+			cid, _ := connReq["id"].(string)
+			res, _ := json.Marshal(map[string]any{
+				"type": "res", "id": cid,
+				"error": map[string]any{"message": "token rejected"},
+			})
+			_ = c.Write(sess, websocket.MessageText, res)
+		}()
+		<-done
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	cl := New(Options{URL: wsURL, Token: "bad", Timeout: 5 * time.Second})
+	defer cl.Close()
+
+	_, err := cl.ListAgentIdentities(ctx)
+	if err == nil || !strings.Contains(err.Error(), "token rejected") {
+		t.Fatalf("want token rejected error, got %v", err)
+	}
+}
+
 func TestReconnectAfterRPCFailure(t *testing.T) {
 	ctx := context.Background()
 	var wave atomic.Int32

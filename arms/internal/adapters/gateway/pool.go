@@ -67,6 +67,29 @@ func newClientPool(knowledge func(context.Context, domain.ProductID, string) (st
 	}
 }
 
+func dispatchTargetForEndpoint(ep *domain.GatewayEndpoint, defaultTimeout time.Duration) domain.DispatchTarget {
+	to := time.Duration(ep.TimeoutSec) * time.Second
+	if to <= 0 {
+		to = defaultTimeout
+	}
+	if to <= 0 {
+		to = 30 * time.Second
+	}
+	return domain.DispatchTarget{
+		Driver:       domain.NormalizeGatewayDriver(ep.Driver),
+		GatewayURL:   ep.GatewayURL,
+		GatewayToken: ep.GatewayToken,
+		DeviceID:     ep.DeviceID,
+		SessionKey:   "",
+		Timeout:      to,
+	}
+}
+
+func (p *clientPool) listOpenClawRemoteAgents(ctx context.Context, ep *domain.GatewayEndpoint) ([]domain.AgentIdentity, error) {
+	t := dispatchTargetForEndpoint(ep, p.defaultTimeout)
+	return p.openclawClientFor(t).ListAgentIdentities(ctx)
+}
+
 func (p *clientPool) key(target domain.DispatchTarget) string {
 	to := target.Timeout
 	if to <= 0 {

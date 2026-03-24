@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/adapters/sqlite"
-	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/application/agentidentity"
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/application/livefeed"
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/config"
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/platform/geoip"
@@ -68,13 +67,7 @@ func OpenApp(ctx context.Context, cfg config.Config, b Build) (*App, error) {
 	liveTX := sqlite.NewLiveActivityTX(db)
 	geoR, geoCleanup := geoip.NewResolver(cfg.GeoIP2CityPath)
 	agentProfiles := sqlite.NewAgentProfileStore(db)
-	idSvc := &agentidentity.Service{
-		Endpoints: gatewayEndpoints,
-		Profiles:  agentProfiles,
-		Geo:       geoR,
-		Events:    taskPub,
-	}
-	h, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, gatewayEndpoints, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, knowUseFTS, hub, taskPub, liveTX, idSvc, sqlite.ExpectedSchemaVersion, b)
+	h, idSvc, gwCleanup := buildHandlers(cfg, products, ideas, tasks, convoys, costs, costCaps, checkpoints, ws, ws, maybePool, swipes, researchCycles, execAgents, gatewayEndpoints, agentMail, agentHealth, pref, ops, sched, cmail, productFb, taskChat, knowledge, knowUseFTS, hub, taskPub, liveTX, agentProfiles, geoR, sqlite.ExpectedSchemaVersion, b)
 	if err := idSvc.RefreshAll(ctx); err != nil {
 		slog.Default().Warn("arms agent identity bootstrap refresh", "err", err)
 	}

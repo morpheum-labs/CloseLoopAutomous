@@ -1156,19 +1156,6 @@ func (h *Handlers) listAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		out["registry"] = regJSON
 	}
-	out["identities"] = []any{}
-	if h.AgentIdentity != nil && h.AgentIdentity.Profiles != nil {
-		idents, err := h.AgentIdentity.Profiles.List(r.Context(), 200)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-		idJSON := make([]any, 0, len(idents))
-		for i := range idents {
-			idJSON = append(idJSON, idents[i])
-		}
-		out["identities"] = idJSON
-	}
 	if h.AgentHealth == nil {
 		out["items"] = []any{}
 		out["stub"] = true

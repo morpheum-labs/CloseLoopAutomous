@@ -337,14 +337,12 @@ export class ArmsClient {
   async listAgents(): Promise<{
     registry: ApiAgentRegistryRow[];
     items: ApiAgentHealthItem[];
-    identities: ApiAgentIdentity[];
     stub: boolean;
   }> {
     const body = await this.getJson<ApiAgentsListResponse>('/api/agents');
     return {
       registry: body.registry ?? [],
       items: body.items ?? [],
-      identities: body.identities ?? [],
       stub: body.stub === true,
     };
   }

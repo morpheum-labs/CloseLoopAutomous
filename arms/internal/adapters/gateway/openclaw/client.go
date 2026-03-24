@@ -194,7 +194,8 @@ func (c *Client) answerChallengeLocked(ctx context.Context, challengeRaw []byte)
 		},
 		"auth":   map[string]any{"token": c.opts.Token},
 		"role":   "operator",
-		"scopes": []string{"operator.admin"},
+		// agents.list / fleet discovery checks operator.read on some gateways; keep admin for dispatch/control.
+		"scopes": []string{"operator.read", "operator.admin"},
 	}
 	msg := map[string]any{
 		"type":   "req",
@@ -235,6 +236,8 @@ type frame struct {
 	OK      *bool           `json:"ok"`
 	Error   *rpcErrBody     `json:"error"`
 	Payload json.RawMessage `json:"payload"`
+	// Result is used by some gateways instead of payload for RPC success bodies (e.g. agents.list).
+	Result json.RawMessage `json:"result"`
 }
 
 type rpcErrBody struct {
@@ -261,6 +264,26 @@ func bytesTrimSpaceJSON(b []byte) []byte {
 	return []byte(strings.TrimSpace(string(b)))
 }
 
+func rpcErrMessage(fr frame) string {
+	if fr.Error != nil && strings.TrimSpace(fr.Error.Message) != "" {
+		return strings.TrimSpace(fr.Error.Message)
+	}
+	return ""
+}
+
+// rpcFrameBody returns the JSON body for a successful res frame (payload or result).
+func rpcFrameBody(fr frame) json.RawMessage {
+	p := bytesTrimSpaceJSON(fr.Payload)
+	if len(p) > 0 && string(p) != "null" {
+		return fr.Payload
+	}
+	r := bytesTrimSpaceJSON(fr.Result)
+	if len(r) > 0 && string(r) != "null" {
+		return fr.Result
+	}
+	return nil
+}
+
 func (c *Client) waitResLocked(ctx context.Context, wantID string) error {
 	for {
 		fr, _, err := readJSONFrame(ctx, c.conn)
@@ -273,10 +296,13 @@ func (c *Client) waitResLocked(ctx context.Context, wantID string) error {
 		if idKey(fr.ID) != wantID {
 			continue
 		}
+		if msg := rpcErrMessage(fr); msg != "" {
+			return errors.New(msg)
+		}
 		if fr.OK != nil && !*fr.OK {
 			msg := "connect failed"
-			if fr.Error != nil && strings.TrimSpace(fr.Error.Message) != "" {
-				msg = fr.Error.Message
+			if m := rpcErrMessage(fr); m != "" {
+				msg = m
 			}
 			return errors.New(msg)
 		}
@@ -289,6 +315,11 @@ func (c *Client) waitResLocked(ctx context.Context, wantID string) error {
 func (c *Client) ListAgentIdentities(ctx context.Context) ([]domain.AgentIdentity, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// Always start from a fresh WebSocket. Pooled clients can keep authenticated=true on a dead
+	// connection after the gateway closed the socket; Mission Control test-connection uses a
+	// one-off client and would still pass while fleet refresh failed.
+	_ = c.dropConnLocked()
 
 	callCtx, cancel := c.callContext(ctx)
 	defer cancel()
@@ -327,14 +358,21 @@ func (c *Client) rpcLocked(ctx context.Context, method string, params map[string
 		if fr.Type != "res" || idKey(fr.ID) != reqID {
 			continue
 		}
+		if msg := rpcErrMessage(fr); msg != "" {
+			return nil, errors.New(msg)
+		}
 		if fr.OK != nil && !*fr.OK {
 			msg := "gateway error"
-			if fr.Error != nil && strings.TrimSpace(fr.Error.Message) != "" {
-				msg = fr.Error.Message
+			if m := rpcErrMessage(fr); m != "" {
+				msg = m
 			}
 			return nil, errors.New(msg)
 		}
-		return fr.Payload, nil
+		body := rpcFrameBody(fr)
+		if body == nil {
+			return nil, nil
+		}
+		return body, nil
 	}
 }
 

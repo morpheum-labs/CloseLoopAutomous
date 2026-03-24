@@ -12,12 +12,16 @@ import (
 )
 
 type AgentProfileStore struct {
-	mu   sync.Mutex
-	byID map[string]domain.AgentIdentity
+	mu        sync.Mutex
+	byID      map[string]domain.AgentIdentity
+	gatewayOf map[string]string // profile id -> gateway_id (for DeleteByGatewayID)
 }
 
 func NewAgentProfileStore() *AgentProfileStore {
-	return &AgentProfileStore{byID: make(map[string]domain.AgentIdentity)}
+	return &AgentProfileStore{
+		byID:      make(map[string]domain.AgentIdentity),
+		gatewayOf: make(map[string]string),
+	}
 }
 
 var _ ports.AgentProfileRepository = (*AgentProfileStore)(nil)
@@ -27,7 +31,6 @@ func (s *AgentProfileStore) Upsert(_ context.Context, gatewayID string, ident *d
 		return nil
 	}
 	cp := *ident
-	// Round-trip through JSON so we match SQLite behavior.
 	b, err := json.Marshal(&cp)
 	if err != nil {
 		return err
@@ -38,7 +41,20 @@ func (s *AgentProfileStore) Upsert(_ context.Context, gatewayID string, ident *d
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byID[cp.ID] = cp
-	_ = gatewayID
+	s.gatewayOf[cp.ID] = gatewayID
+	return nil
+}
+
+func (s *AgentProfileStore) DeleteByGatewayID(_ context.Context, gatewayID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, gw := range s.gatewayOf {
+		if gw != gatewayID {
+			continue
+		}
+		delete(s.byID, id)
+		delete(s.gatewayOf, id)
+	}
 	return nil
 }
 

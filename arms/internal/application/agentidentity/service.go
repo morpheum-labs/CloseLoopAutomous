@@ -2,6 +2,7 @@ package agentidentity
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/url"
 	"strings"
@@ -11,16 +12,18 @@ import (
 	"github.com/morpheumstreet/CloseLoopAutomous/arms/internal/ports"
 )
 
-// Service synthesizes and stores [domain.AgentIdentity] rows from gateway endpoints (MVP: registry + optional GeoIP).
+// Service discovers remote agent profiles per gateway endpoint, upserts fleet cache rows, and links the execution registry.
 type Service struct {
 	Endpoints ports.GatewayEndpointRegistry
 	Profiles  ports.AgentProfileRepository
+	Registry  ports.ExecutionAgentRegistry
+	Source    ports.RemoteAgentProfileSource
 	Geo       ports.GeoIPResolver
 	Events    ports.LiveActivityPublisher
 	Clock     func() time.Time
 }
 
-// RefreshAll rebuilds identities for every gateway endpoint and upserts profiles.
+// RefreshAll clears cached profiles per gateway, re-runs remote discovery (or synthetic rows), and upserts agent_profiles.
 func (s *Service) RefreshAll(ctx context.Context) error {
 	if s == nil || s.Endpoints == nil || s.Profiles == nil {
 		return nil
@@ -33,69 +36,84 @@ func (s *Service) RefreshAll(ctx context.Context) error {
 	if s.Clock != nil {
 		now = s.Clock().UTC()
 	}
-	for i := range list {
-		ep := &list[i]
-		ident := synthesize(ep, s.Geo, now)
-		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		enrichReachability(pctx, ep, ident)
-		cancel()
-		if err := s.Profiles.Upsert(ctx, ep.ID, ident); err != nil {
+	var execAgents []domain.ExecutionAgent
+	if s.Registry != nil {
+		execAgents, err = s.Registry.List(ctx, 5000)
+		if err != nil {
 			return err
 		}
-		if s.Events != nil {
-			_ = s.Events.Publish(ctx, ports.LiveActivityEvent{
-				Type: "agent_identity_updated",
-				Ts:   now.Format(time.RFC3339Nano),
-				Data: map[string]any{
-					"identity_id": ident.ID,
-					"gateway_id":  ep.ID,
-					"driver":      ep.Driver,
-				},
-			})
+	}
+	regIndex := buildRegistryMatchIndex(execAgents)
+
+	for i := range list {
+		ep := &list[i]
+		if err := s.Profiles.DeleteByGatewayID(ctx, ep.ID); err != nil {
+			return err
+		}
+		hostGeo := lookupGatewayGeo(ctx, s.Geo, ep)
+
+		var rows []domain.AgentIdentity
+		if s.Source != nil {
+			pctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			discovered, derr := s.Source.ListRemoteProfiles(pctx, ep)
+			cancel()
+			switch {
+			case derr != nil && errors.Is(derr, domain.ErrRemoteAgentListUnsupported):
+				rows = []domain.AgentIdentity{unsupportedDiscoveryIdentity(ep, now, hostGeo)}
+			case derr != nil:
+				rows = []domain.AgentIdentity{gatewayScanErrorIdentity(ep, derr, now, hostGeo)}
+			case len(discovered) == 0:
+				rows = []domain.AgentIdentity{emptyRemoteListIdentity(ep, now, hostGeo)}
+			default:
+				rows = make([]domain.AgentIdentity, 0, len(discovered))
+				for j := range discovered {
+					final := finalizeFleetIdentity(ep, &discovered[j], regIndex, now, hostGeo)
+					rows = append(rows, final)
+				}
+			}
+		} else {
+			rows = []domain.AgentIdentity{unsupportedDiscoveryIdentity(ep, now, hostGeo)}
+		}
+
+		for j := range rows {
+			row := &rows[j]
+			if err := s.Profiles.Upsert(ctx, ep.ID, row); err != nil {
+				return err
+			}
+			if s.Events != nil {
+				_ = s.Events.Publish(ctx, ports.LiveActivityEvent{
+					Type: "agent_identity_updated",
+					Ts:   now.Format(time.RFC3339Nano),
+					Data: map[string]any{
+						"identity_id": row.ID,
+						"gateway_id":  ep.ID,
+						"driver":      ep.Driver,
+					},
+				})
+			}
 		}
 	}
 	return nil
 }
 
-func synthesize(ep *domain.GatewayEndpoint, geo ports.GeoIPResolver, now time.Time) *domain.AgentIdentity {
-	id := domain.StableAgentProfileID(ep.ID, ep.DeviceID)
-	name := strings.TrimSpace(ep.DisplayName)
-	if name == "" {
-		name = ep.ID
+func lookupGatewayGeo(ctx context.Context, geo ports.GeoIPResolver, ep *domain.GatewayEndpoint) *domain.GeoLocation {
+	if geo == nil || ep == nil || strings.TrimSpace(ep.GatewayURL) == "" {
+		return nil
 	}
-	st := domain.StatusOffline
-	if ep.Driver == domain.GatewayDriverStub {
-		st = domain.StatusOnline
+	host := hostFromGatewayURL(ep.GatewayURL)
+	if host == "" {
+		return nil
 	}
-	ident := &domain.AgentIdentity{
-		ID:         id,
-		GatewayURL: ep.GatewayURL,
-		Name:       name,
-		Driver:     ep.Driver,
-		Status:     st,
-		LastSeen:   now,
-		Platform:   domain.PlatformInfo{},
-		Metrics:    domain.Metrics{},
-		Custom: map[string]any{
-			"gateway_endpoint_id": ep.ID,
-			"device_id":           strings.TrimSpace(ep.DeviceID),
-		},
+	gctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	g, err := geo.LookupHost(gctx, host)
+	if err != nil {
+		slog.Default().Debug("agentidentity geo lookup", "host", host, "err", err)
 	}
-	if geo != nil && strings.TrimSpace(ep.GatewayURL) != "" {
-		host := hostFromGatewayURL(ep.GatewayURL)
-		if host != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			g, err := geo.LookupHost(ctx, host)
-			cancel()
-			if err != nil {
-				slog.Default().Debug("agentidentity geo lookup", "host", host, "err", err)
-			}
-			if g != nil && g.Source != "" && g.Source != "none" {
-				ident.Geo = g
-			}
-		}
+	if g != nil && g.Source != "" && g.Source != "none" {
+		return g
 	}
-	return ident
+	return nil
 }
 
 func hostFromGatewayURL(raw string) string {
@@ -103,6 +121,5 @@ func hostFromGatewayURL(raw string) string {
 	if err != nil || u.Host == "" {
 		return ""
 	}
-	host := u.Hostname()
-	return host
+	return u.Hostname()
 }

@@ -18,7 +18,10 @@ type RoutingGateway struct {
 	resolver *TargetResolver
 }
 
-var _ ports.AgentGateway = (*RoutingGateway)(nil)
+var (
+	_ ports.AgentGateway             = (*RoutingGateway)(nil)
+	_ ports.RemoteAgentProfileSource = (*RoutingGateway)(nil)
+)
 
 func isPooledRemoteDriver(d string) bool {
 	switch d {
@@ -102,4 +105,52 @@ func (r *RoutingGateway) DispatchSubtask(ctx context.Context, parent domain.Task
 		}
 		return "", fmt.Errorf("%w: unsupported gateway driver %q", domain.ErrInvalidInput, target.Driver)
 	}
+}
+
+// ListRemoteProfiles implements [ports.RemoteAgentProfileSource] (OpenClaw-class WebSocket: agents.list RPC).
+func (r *RoutingGateway) ListRemoteProfiles(ctx context.Context, ep *domain.GatewayEndpoint) ([]domain.AgentIdentity, error) {
+	if r == nil || ep == nil {
+		return nil, nil
+	}
+	drv := domain.NormalizeGatewayDriver(ep.Driver)
+	now := time.Now().UTC()
+	switch drv {
+	case domain.GatewayDriverStub:
+		return stubRemoteFleet(ep, now), nil
+	case domain.GatewayDriverOpenClawWS, domain.GatewayDriverNullClawWS,
+		domain.GatewayDriverZeroClawWS, domain.GatewayDriverClawletWS, domain.GatewayDriverIronClawWS:
+		list, err := r.pool.listOpenClawRemoteAgents(ctx, ep)
+		if err != nil {
+			return nil, err
+		}
+		for i := range list {
+			list[i].Driver = drv
+			if strings.TrimSpace(list[i].GatewayURL) == "" {
+				list[i].GatewayURL = ep.GatewayURL
+			}
+		}
+		return list, nil
+	default:
+		return nil, domain.ErrRemoteAgentListUnsupported
+	}
+}
+
+func stubRemoteFleet(ep *domain.GatewayEndpoint, now time.Time) []domain.AgentIdentity {
+	id := domain.FleetProfileID(ep.ID, "stub-local")
+	return []domain.AgentIdentity{{
+		ID:         id,
+		GatewayURL: "",
+		Name:       "Stub (local)",
+		Driver:     domain.GatewayDriverStub,
+		Version:    "1.0",
+		Status:     domain.StatusOnline,
+		LastSeen:   now,
+		Custom: map[string]any{
+			"gateway_endpoint_id":   ep.ID,
+			"remote_agent_id":       "stub-local",
+			"suggested_session_key": "",
+			"discovery_kind":        "stub",
+			"on_registry":           false,
+		},
+	}}
 }
