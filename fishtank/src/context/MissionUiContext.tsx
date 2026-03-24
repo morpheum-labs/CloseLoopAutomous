@@ -68,6 +68,8 @@ export interface MissionUiValue {
   fleetAgentIdentities: ApiAgentIdentity[];
   /** Calls `POST /api/fleet/refresh` then reloads identities from `GET /api/agents`. */
   refreshFleetIdentities: () => Promise<void>;
+  /** `GET /api/agents` (registry + heartbeats stub) + `GET /api/fleet/identities` (scan, up to 500 rows). Use on Agents page. */
+  refreshAgentDirectory: () => Promise<void>;
   events: FeedEvent[];
   isOnline: boolean;
   feedLive: boolean;
@@ -181,6 +183,20 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
     setFeedEpoch((e) => e + 1);
   }, []);
 
+  const refreshAgentDirectory = useCallback(async () => {
+    const snap = await client.listAgents();
+    setExecutionAgentRegistry(snap.registry);
+    setAgentRegistryHealthStub(snap.stub);
+    let identities = snap.identities ?? [];
+    try {
+      const fleet = await client.listFleetIdentities({ limit: 500 });
+      if (fleet.length > 0) identities = fleet;
+    } catch {
+      /* use identities from GET /api/agents */
+    }
+    setFleetAgentIdentities(identities);
+  }, [client]);
+
   const refreshWorkspaces = useCallback(async () => {
     setListLoading(true);
     setApiError(null);
@@ -190,10 +206,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       const next = await loadWorkspaceSummaries(client);
       setWorkspaces(next);
       try {
-        const snap = await client.listAgents();
-        setExecutionAgentRegistry(snap.registry);
-        setAgentRegistryHealthStub(snap.stub);
-        setFleetAgentIdentities(snap.identities ?? []);
+        await refreshAgentDirectory();
       } catch {
         setExecutionAgentRegistry([]);
         setAgentRegistryHealthStub(false);
@@ -206,7 +219,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
     } finally {
       setListLoading(false);
     }
-  }, [client]);
+  }, [client, refreshAgentDirectory]);
 
   const pingOnce = useCallback(async () => {
     try {
@@ -399,14 +412,11 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
     setApiError(null);
     try {
       await client.postFleetRefresh();
-      const snap = await client.listAgents();
-      setFleetAgentIdentities(snap.identities ?? []);
-      setExecutionAgentRegistry(snap.registry ?? []);
-      setAgentRegistryHealthStub(snap.stub === true);
+      await refreshAgentDirectory();
     } catch {
       setApiError('Failed to refresh fleet identities.');
     }
-  }, [client]);
+  }, [client, refreshAgentDirectory]);
 
   const fetchVersion = useCallback(() => client.version(), [client]);
 
@@ -521,6 +531,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       agentRegistryHealthStub,
       fleetAgentIdentities,
       refreshFleetIdentities,
+      refreshAgentDirectory,
       events: liveEvents,
       isOnline,
       feedLive,
@@ -560,6 +571,7 @@ export function MissionUiProvider({ children }: { children: ReactNode }) {
       agentRegistryHealthStub,
       fleetAgentIdentities,
       refreshFleetIdentities,
+      refreshAgentDirectory,
       liveEvents,
       isOnline,
       feedLive,

@@ -1146,7 +1146,8 @@ func (h *Handlers) listAgents(w http.ResponseWriter, r *http.Request) {
 			a := &reg[i]
 			row := map[string]any{
 				"id": a.ID, "display_name": a.DisplayName, "source": a.Source,
-				"external_ref": a.ExternalRef, "created_at": a.CreatedAt.UTC().Format(time.RFC3339Nano),
+				"external_ref": a.ExternalRef, "gateway_endpoint_id": a.EndpointID, "session_key": a.SessionKey,
+				"created_at": a.CreatedAt.UTC().Format(time.RFC3339Nano),
 			}
 			if a.ProductID != "" {
 				row["product_id"] = string(a.ProductID)

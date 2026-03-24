@@ -1,5 +1,5 @@
 import { ChevronRight, MapPin, RefreshCw, Search, Server, Zap } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ApiAgentIdentity, ApiAgentRegistryRow } from '../../api/armsTypes';
 import { useMissionUi } from '../../context/MissionUiContext';
 import type { Agent } from '../../domain/types';
@@ -14,10 +14,16 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
     agentRegistryHealthStub,
     fleetAgentIdentities,
     refreshFleetIdentities,
+    refreshAgentDirectory,
     workspaces,
   } = useMissionUi();
   const [query, setQuery] = useState('');
   const [fleetRefreshing, setFleetRefreshing] = useState(false);
+  const [registryReloading, setRegistryReloading] = useState(false);
+
+  useEffect(() => {
+    void refreshAgentDirectory();
+  }, [refreshAgentDirectory]);
 
   const productLabel = useMemo(() => {
     const m = new Map<string, string>();
@@ -48,7 +54,10 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
     return executionAgentRegistry.filter((r) => {
       const pid = r.product_id?.trim() ?? '';
       const pname = pid ? (productLabel.get(pid) ?? pid) : '';
-      const hay = `${r.display_name} ${r.id} ${r.source} ${r.external_ref} ${pid} ${pname}`.toLowerCase();
+      const ep = r.gateway_endpoint_id?.trim() ?? '';
+      const sk = r.session_key?.trim() ?? '';
+      const hay =
+        `${r.display_name} ${r.id} ${r.source} ${r.external_ref} ${pid} ${pname} ${ep} ${sk}`.toLowerCase();
       return hay.includes(q);
     });
   }, [executionAgentRegistry, productLabel, query]);
@@ -119,10 +128,10 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
           </button>
         </div>
         <p className="ft-muted" style={{ fontSize: '0.65rem', padding: '0 0.5rem 0.5rem', lineHeight: 1.45, margin: 0 }}>
-          Unified <code className="ft-mono">AgentIdentity</code> from gateways (Geo via optional{' '}
-          <code className="ft-mono">ARMS_GEOIP2_CITY</code>). <strong>AUTH</strong> means HTTP 401/403 or missing token (selected drivers);{' '}
-          <strong>OFFLINE</strong> is unreachable host or WebSocket drivers (no WS probe on refresh). SSE{' '}
-          <code className="ft-mono">agent_identity_updated</code> updates this list.
+          Unified <code className="ft-mono">AgentIdentity</code> from <code className="ft-mono">agent_profiles</code> (Geo via optional{' '}
+          <code className="ft-mono">ARMS_GEOIP2_CITY</code>). This page reloads <code className="ft-mono">GET /api/fleet/identities</code> on open.{' '}
+          <strong>AUTH</strong> means HTTP 401/403 or missing token (selected drivers); <strong>OFFLINE</strong> is unreachable host or WebSocket drivers
+          (no WS probe on refresh). SSE <code className="ft-mono">agent_identity_updated</code> updates via <code className="ft-mono">GET /api/agents</code>.
         </p>
         {fleetList.length === 0 ? (
           <p className="ft-muted" style={{ fontSize: '0.75rem', padding: '0.5rem', lineHeight: 1.5 }}>
@@ -133,13 +142,38 @@ export function AgentsPanel({ embedded = false }: AgentsPanelProps) {
         )}
 
         <div
-          className="ft-upper-label"
-          style={{ fontSize: '0.65rem', margin: '0.85rem 0.5rem 0.35rem', paddingTop: '0.5rem', borderTop: '1px solid var(--mc-border)', opacity: 0.85 }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '0.5rem',
+            margin: '0.85rem 0.5rem 0.35rem',
+            paddingTop: '0.5rem',
+            borderTop: '1px solid var(--mc-border)',
+          }}
         >
-          Registered execution agents
+          <span className="ft-upper-label" style={{ fontSize: '0.65rem', opacity: 0.85 }}>
+            Registered execution agents
+          </span>
+          <button
+            type="button"
+            className="ft-btn ft-btn--ghost ft-btn--sm"
+            disabled={registryReloading}
+            title="GET /api/agents (registry) + GET /api/fleet/identities (scan)"
+            onClick={() => {
+              setRegistryReloading(true);
+              void refreshAgentDirectory().finally(() => setRegistryReloading(false));
+            }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.65rem' }}
+          >
+            <RefreshCw size={12} className={registryReloading ? 'ft-spin' : ''} aria-hidden />
+            Reload
+          </button>
         </div>
         <p className="ft-muted" style={{ fontSize: '0.65rem', padding: '0 0.5rem 0.5rem', lineHeight: 1.45, margin: 0 }}>
-          From <code className="ft-mono">GET /api/agents</code> — fleet-wide registry (independent of live gateway sockets).
+          <code className="ft-mono">GET /api/agents</code> → <code className="ft-mono">registry[]</code>; gateway scan via{' '}
+          <code className="ft-mono">GET /api/fleet/identities?limit=500</code> for the list above. Task heartbeats still come from the same{' '}
+          <code className="ft-mono">GET /api/agents</code> response.
           {agentRegistryHealthStub ? (
             <>
               {' '}
@@ -294,6 +328,12 @@ function RegistryAgentRow({
           <span className="ft-mono">{row.id.slice(0, 12)}</span>
           {row.source ? ` · ${row.source}` : ''} · {pname}
         </div>
+        {row.gateway_endpoint_id ? (
+          <div className="ft-truncate ft-mono" style={{ fontSize: '0.6rem', opacity: 0.8, marginTop: 2 }}>
+            gw: {row.gateway_endpoint_id}
+            {row.session_key ? ` · session: ${row.session_key}` : ''}
+          </div>
+        ) : null}
       </div>
       <span className={badge.className} title={badge.title} style={badge.label === 'OTHER' ? { opacity: 0.65 } : undefined}>
         {badge.label}

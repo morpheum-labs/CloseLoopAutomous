@@ -100,6 +100,97 @@ func TestNativeHandshakeAndChatSend(t *testing.T) {
 	}
 }
 
+func TestListAgentIdentities_agentsList(t *testing.T) {
+	ctx := context.Background()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
+		if err != nil {
+			return
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sess := context.Background()
+			challenge, _ := json.Marshal(map[string]any{
+				"type":    "event",
+				"event":   "connect.challenge",
+				"payload": map[string]any{"nonce": "n"},
+			})
+			if err := c.Write(sess, websocket.MessageText, challenge); err != nil {
+				t.Errorf("challenge: %v", err)
+				return
+			}
+			_, raw, err := c.Read(sess)
+			if err != nil {
+				t.Errorf("read connect: %v", err)
+				return
+			}
+			var connReq map[string]any
+			if err := json.Unmarshal(raw, &connReq); err != nil {
+				t.Errorf("parse connect: %v", err)
+				return
+			}
+			cid, _ := connReq["id"].(string)
+			res, _ := json.Marshal(map[string]any{"type": "res", "id": cid, "ok": true})
+			if err := c.Write(sess, websocket.MessageText, res); err != nil {
+				t.Errorf("connect res: %v", err)
+				return
+			}
+			_, raw2, err := c.Read(sess)
+			if err != nil {
+				t.Errorf("read agents.list: %v", err)
+				return
+			}
+			var listReq map[string]any
+			if err := json.Unmarshal(raw2, &listReq); err != nil {
+				t.Errorf("parse agents.list: %v", err)
+				return
+			}
+			if listReq["method"] != "agents.list" {
+				t.Errorf("method %v", listReq["method"])
+				return
+			}
+			lid, _ := listReq["id"].(string)
+			agentsPayload, _ := json.Marshal(map[string]any{
+				"type": "res",
+				"id":   lid,
+				"ok":   true,
+				"payload": map[string]any{
+					"agents": []map[string]any{
+						{"id": "ag-1", "name": "Primary", "identity": "id-a", "model": "m1"},
+						{"sessionKey": "agent:main:aux", "displayName": "Aux"},
+					},
+				},
+			})
+			_ = c.Write(sess, websocket.MessageText, agentsPayload)
+		}()
+		<-done
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	cl := New(Options{URL: wsURL, Token: "tok", Timeout: 5 * time.Second})
+	defer cl.Close()
+
+	idents, err := cl.ListAgentIdentities(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idents) != 2 {
+		t.Fatalf("len %d", len(idents))
+	}
+	if idents[0].ID != "ag-1" || idents[0].Name != "Primary" || idents[0].Driver != domain.GatewayDriverOpenClawWS {
+		t.Fatalf("first %+v", idents[0])
+	}
+	if idents[0].Custom["openclaw_identity"] != "id-a" || idents[0].Custom["model"] != "m1" {
+		t.Fatalf("custom %+v", idents[0].Custom)
+	}
+	if idents[1].ID != "agent:main:aux" || idents[1].Name != "Aux" {
+		t.Fatalf("second %+v", idents[1])
+	}
+}
+
 func TestReconnectAfterRPCFailure(t *testing.T) {
 	ctx := context.Background()
 	var wave atomic.Int32

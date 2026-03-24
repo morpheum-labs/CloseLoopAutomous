@@ -354,6 +354,16 @@ export class ArmsClient {
     await this.postJson<{ status?: string }>('/api/fleet/refresh', {});
   }
 
+  /** List synthesized AgentIdentity rows from `agent_profiles` (scan / fleet view); max limit 500. */
+  async listFleetIdentities(opts?: { limit?: number }): Promise<ApiAgentIdentity[]> {
+    const sp = new URLSearchParams();
+    if (opts?.limit != null && opts.limit > 0) sp.set('limit', String(Math.min(500, opts.limit)));
+    const qs = sp.toString();
+    const path = qs ? `/api/fleet/identities?${qs}` : '/api/fleet/identities';
+    const body = await this.getJson<{ identities?: ApiAgentIdentity[] }>(path);
+    return body.identities ?? [];
+  }
+
   async createProduct(body: CreateProductBody): Promise<ApiProduct> {
     return this.postJson<ApiProduct>('/api/products', body);
   }

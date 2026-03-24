@@ -284,6 +284,31 @@ func (c *Client) waitResLocked(ctx context.Context, wantID string) error {
 	}
 }
 
+// ListAgentIdentities calls agents.list on an authenticated OpenClaw session and maps rows to
+// [domain.AgentIdentity] (see docs/scan-agents.md). Uses the same lock + handshake + RPC path as Dispatch*.
+func (c *Client) ListAgentIdentities(ctx context.Context) ([]domain.AgentIdentity, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	callCtx, cancel := c.callContext(ctx)
+	defer cancel()
+
+	if err := c.ensureAuthedLocked(callCtx); err != nil {
+		return nil, err
+	}
+
+	rawPayload, err := c.rpcLocked(callCtx, "agents.list", map[string]any{})
+	if err != nil {
+		_ = c.dropConnLocked()
+		return nil, fmt.Errorf("openclaw agents.list: %w", err)
+	}
+	idents, err := mapAgentsListPayload(rawPayload, c.opts.URL, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	return idents, nil
+}
+
 func (c *Client) rpcLocked(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	reqID := uuid.NewString()
 	msg := map[string]any{"type": "req", "id": reqID, "method": method, "params": params}

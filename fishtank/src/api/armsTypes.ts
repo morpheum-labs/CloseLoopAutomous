@@ -156,6 +156,8 @@ export type ApiAgentRegistryRow = {
   external_ref: string;
   created_at: string;
   product_id?: string;
+  gateway_endpoint_id?: string;
+  session_key?: string;
 };
 
 /** Synthesized gateway agent profile (`GET /api/agents` `identities[]`, `GET /api/fleet/identities`). */
