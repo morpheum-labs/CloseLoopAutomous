@@ -1,0 +1,409 @@
+openapi: 3.1.0
+info:
+  title: ResearchClaw
+  description: |
+    Autonomous Research Pipeline — Web Interface
+
+    **WebSocket endpoints** (not represented as REST paths below; connect with the WebSocket
+    protocol on the same host/port):
+
+    - `/ws/events` — real-time event stream for the dashboard
+    - `/ws/chat` — conversational research chat (when not running with `dashboard_only`)
+
+    The `/api/voice/*` routes are registered only when `server.voice_enabled` is true in config.
+  version: 0.3.3
+paths:
+  /api/health:
+    get:
+      summary: Health
+      operationId: health_api_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Health Api Health Get
+  /api/version:
+    get:
+      summary: Version Info
+      description: Package, HTTP API contract, runtime, and OpenAPI spec metadata.
+      operationId: version_info_api_version_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Version Info Api Version Get
+  /api/config:
+    get:
+      summary: Config Summary
+      operationId: config_summary_api_config_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Config Summary Api Config Get
+  /api/pipeline/start:
+    post:
+      tags:
+        - pipeline
+      summary: Start Pipeline
+      description: Start a new pipeline run.
+      operationId: start_pipeline_api_pipeline_start_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineStartRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineStartResponse'
+        '409':
+          description: A pipeline is already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/pipeline/stop:
+    post:
+      tags:
+        - pipeline
+      summary: Stop Pipeline
+      description: Stop the currently running pipeline.
+      operationId: stop_pipeline_api_pipeline_stop_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Stop Pipeline Api Pipeline Stop Post
+        '404':
+          description: No pipeline is running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+  /api/pipeline/status:
+    get:
+      tags:
+        - pipeline
+      summary: Pipeline Status
+      description: Get current pipeline run status.
+      operationId: pipeline_status_api_pipeline_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Pipeline Status Api Pipeline Status Get
+  /api/pipeline/stages:
+    get:
+      tags:
+        - pipeline
+      summary: Pipeline Stages
+      description: Get the 23-stage pipeline definition.
+      operationId: pipeline_stages_api_pipeline_stages_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Pipeline Stages Api Pipeline Stages Get
+  /api/runs:
+    get:
+      tags:
+        - pipeline
+      summary: List Runs
+      description: List historical pipeline runs from artifacts/ directory.
+      operationId: list_runs_api_runs_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response List Runs Api Runs Get
+  /api/runs/{run_id}:
+    get:
+      tags:
+        - pipeline
+      summary: Get Run
+      description: Get details for a specific run.
+      operationId: get_run_api_runs__run_id__get
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Run Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Run Api Runs  Run Id  Get
+        '400':
+          description: Invalid run_id format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/runs/{run_id}/metrics:
+    get:
+      tags:
+        - pipeline
+      summary: Get Run Metrics
+      description: Get experiment metrics for a run.
+      operationId: get_run_metrics_api_runs__run_id__metrics_get
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Run Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Get Run Metrics Api Runs  Run Id  Metrics Get
+        '400':
+          description: Invalid run_id format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '404':
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/projects:
+    get:
+      tags:
+        - projects
+      summary: List Projects
+      description: List all project directories (artifacts/rc-*).
+      operationId: list_projects_api_projects_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response List Projects Api Projects Get
+  /api/voice/transcribe:
+    post:
+      tags:
+        - voice
+      summary: Transcribe Audio
+      description: |
+        Transcribe uploaded audio using the configured Whisper integration.
+        Returns 403 when voice is disabled in config, 501 when optional voice dependencies are missing.
+      operationId: transcribe_audio_api_voice_transcribe_post
+      parameters:
+        - name: language
+          in: query
+          required: false
+          schema:
+            type: string
+            default: zh
+            title: Language
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  title: File
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceTranscribeResponse'
+        '403':
+          description: Voice is not enabled in config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '501':
+          description: Voice dependencies not installed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPError'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+components:
+  schemas:
+    HTTPError:
+      type: object
+      properties:
+        detail:
+          anyOf:
+            - type: string
+            - type: array
+              items: {}
+      title: HTTPError
+      description: FastAPI HTTPException body (`detail` may be a string or structured validation-style list).
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    PipelineStartRequest:
+      properties:
+        topic:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Topic
+        config_overrides:
+          anyOf:
+            - additionalProperties: true
+              type: object
+            - type: 'null'
+          title: Config Overrides
+        auto_approve:
+          type: boolean
+          title: Auto Approve
+          default: true
+      type: object
+      title: PipelineStartRequest
+      description: Request body for starting a pipeline run.
+    PipelineStartResponse:
+      properties:
+        run_id:
+          type: string
+          title: Run Id
+        status:
+          type: string
+          title: Status
+        output_dir:
+          type: string
+          title: Output Dir
+      type: object
+      required:
+        - run_id
+        - status
+        - output_dir
+      title: PipelineStartResponse
+      description: Response after starting a pipeline.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+        - loc
+        - msg
+        - type
+      title: ValidationError
+    VoiceTranscribeResponse:
+      type: object
+      required:
+        - text
+        - language
+      properties:
+        text:
+          type: string
+          title: Text
+        language:
+          type: string
+          title: Language
+      title: VoiceTranscribeResponse
